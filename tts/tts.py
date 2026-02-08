@@ -27,10 +27,13 @@ except ImportError:
     print("Error: edge-tts not installed. Run: pip install edge-tts")
     sys.exit(1)
 
-# Configuration - UPDATE THESE VALUES
-SUPABASE_URL = "https://YOUR_PROJECT_ID.supabase.co"
-SUPABASE_KEY = "YOUR_SUPABASE_ANON_KEY"
-USER_ID = "YOUR_USER_ID"
+# Configuration - prefer env vars so you can use service role for Storage writes
+SUPABASE_URL = os.getenv("STASH_SUPABASE_URL", "https://fvydjrhqaeemkdakqnfk.supabase.co")
+SUPABASE_KEY = os.getenv(
+    "STASH_SUPABASE_SERVICE_ROLE_KEY",
+    os.getenv("STASH_SUPABASE_KEY", "sb_publishable_MkrRsrV7RAyYyTqkod_BxQ_4FdBY28I"),
+)
+USER_ID = os.getenv("STASH_USER_ID", "ab4b8518-354a-4c5e-a826-0b0a5c48cb57")
 CHECK_INTERVAL = 120  # seconds between checks
 LOG_FILE = Path(__file__).parent / "tts.log"
 
