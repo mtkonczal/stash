@@ -785,16 +785,21 @@ class StashApp {
   async initAudio(url) {
     this.stopAudio();
 
-    // Extract filename from URL and get a signed URL
-    const filename = url.split('/').pop();
-    const signedUrl = await this.getSignedAudioUrl(filename);
+    // If the URL is already public, use it directly to avoid signed URL/RLS issues
+    let audioSrc = url;
+    if (!url.includes('/storage/v1/object/public/')) {
+      // Extract filename from URL and get a signed URL
+      const filename = url.split('/').pop();
+      const signedUrl = await this.getSignedAudioUrl(filename);
 
-    if (!signedUrl) {
-      console.error('Failed to get signed URL for audio');
-      return;
+      if (!signedUrl) {
+        console.error('Failed to get signed URL for audio');
+        return;
+      }
+      audioSrc = signedUrl;
     }
 
-    this.audio = new Audio(signedUrl);
+    this.audio = new Audio(audioSrc);
     this.isPlaying = false;
 
     // Reset UI
