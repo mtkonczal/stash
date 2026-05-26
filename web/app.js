@@ -446,6 +446,8 @@ class StashApp {
         if (save) this.openReadingPane(save);
       });
     });
+
+    this.attachSwipeHandlers(container);
   }
 
   // Weekly Review special rendering
@@ -536,6 +538,8 @@ class StashApp {
         if (save) this.openReadingPane(save);
       });
     });
+
+    this.attachSwipeHandlers(container);
   }
 
   updateRediscovery(save) {
@@ -595,6 +599,227 @@ class StashApp {
         </div>
       </div>
     `;
+  }
+
+  attachSwipeHandlers(container) {
+    const archiveLabel = this.currentView === 'archived' ? 'Unarchive' : 'Archive';
+    container.querySelectorAll('.save-card').forEach(card => {
+      if (card.closest('.save-swipe')) return;
+
+      const wrapper = document.createElement('div');
+      wrapper.className = 'save-swipe';
+
+      const archiveBg = document.createElement('div');
+      archiveBg.className = 'swipe-bg swipe-bg-archive';
+      archiveBg.textContent = archiveLabel;
+
+      const deleteBg = document.createElement('div');
+      deleteBg.className = 'swipe-bg swipe-bg-delete';
+      deleteBg.textContent = 'Delete';
+
+      card.parentNode.insertBefore(wrapper, card);
+      wrapper.appendChild(archiveBg);
+      wrapper.appendChild(deleteBg);
+      wrapper.appendChild(card);
+
+      this.bindSwipe(card, wrapper);
+    });
+  }
+
+  bindSwipe(card, wrapper) {
+    let startX = 0;
+    let startY = 0;
+    let currentDX = 0;
+    let dragging = false;
+    let pointerId = null;
+
+    const reset = () => {
+      wrapper.classList.remove('swiping', 'swipe-right-active', 'swipe-left-active');
+      card.style.transform = '';
+      card.style.transition = '';
+    };
+
+    const onDown = (e) => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      startX = e.clientX;
+      startY = e.clientY;
+      currentDX = 0;
+      dragging = false;
+      pointerId = e.pointerId;
+      card.style.transition = 'none';
+    };
+
+    const onMove = (e) => {
+      if (pointerId !== e.pointerId) return;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+
+      if (!dragging) {
+        if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+        if (Math.abs(dy) > Math.abs(dx)) {
+          pointerId = null;
+          card.style.transition = '';
+          return;
+        }
+        dragging = true;
+        try { card.setPointerCapture(e.pointerId); } catch (_) {}
+        wrapper.classList.add('swiping');
+      }
+
+      currentDX = dx;
+      card.style.transform = `translateX(${dx}px)`;
+      wrapper.classList.toggle('swipe-right-active', dx > 0);
+      wrapper.classList.toggle('swipe-left-active', dx < 0);
+    };
+
+    const onUp = (e) => {
+      if (pointerId !== e.pointerId) return;
+      pointerId = null;
+
+      if (!dragging) {
+        card.style.transition = '';
+        return;
+      }
+
+      // Block the synthetic click that follows pointerup on the same target
+      const blockClick = (ev) => {
+        ev.stopPropagation();
+        ev.preventDefault();
+        window.removeEventListener('click', blockClick, true);
+      };
+      window.addEventListener('click', blockClick, true);
+      setTimeout(() => window.removeEventListener('click', blockClick, true), 250);
+
+      const threshold = Math.min(card.offsetWidth * 0.35, 110);
+      const id = card.dataset.id;
+      card.style.transition = 'transform 0.22s ease';
+
+      if (currentDX > threshold) {
+        card.style.transform = `translateX(${card.offsetWidth + 80}px)`;
+        setTimeout(() => this.swipeArchive(id), 200);
+      } else if (currentDX < -threshold) {
+        card.style.transform = `translateX(-${card.offsetWidth + 80}px)`;
+        setTimeout(() => this.swipeDelete(id), 200);
+      } else {
+        card.style.transform = 'translateX(0)';
+        setTimeout(reset, 240);
+      }
+    };
+
+    const onCancel = (e) => {
+      if (pointerId !== e.pointerId) return;
+      pointerId = null;
+      if (!dragging) {
+        card.style.transition = '';
+        return;
+      }
+      card.style.transition = 'transform 0.2s ease';
+      card.style.transform = 'translateX(0)';
+      setTimeout(reset, 220);
+    };
+
+    card.addEventListener('pointerdown', onDown);
+    card.addEventListener('pointermove', onMove);
+    card.addEventListener('pointerup', onUp);
+    card.addEventListener('pointercancel', onCancel);
+  }
+
+  renderForCurrentView() {
+    if (this.currentView === 'weekly') {
+      this.renderWeeklyReview();
+    } else {
+      this.renderSaves();
+    }
+  }
+
+  async swipeArchive(id) {
+    const save = this.saves.find(s => s.id === id);
+    if (!save) return;
+
+    const newValue = !save.is_archived;
+
+    // Optimistic remove from local list
+    this.saves = this.saves.filter(s => s.id !== id);
+    this.renderForCurrentView();
+
+    const { error } = await this.supabase
+      .from('saves')
+      .update({ is_archived: newValue })
+      .eq('id', id);
+
+    if (error) {
+      console.error('Archive failed:', error);
+      this.loadSaves();
+      return;
+    }
+
+    const label = newValue ? 'Archived' : 'Moved to inbox';
+    this.showSwipeToast(label, async () => {
+      await this.supabase
+        .from('saves')
+        .update({ is_archived: !newValue })
+        .eq('id', id);
+      this.loadSaves();
+    });
+  }
+
+  async swipeDelete(id) {
+    const save = this.saves.find(s => s.id === id);
+    if (!save) return;
+
+    // Optimistic remove
+    this.saves = this.saves.filter(s => s.id !== id);
+    this.renderForCurrentView();
+
+    // Defer the actual DB delete so undo can cancel it
+    let cancelled = false;
+    const timeoutId = setTimeout(async () => {
+      if (cancelled) return;
+      const { error } = await this.supabase
+        .from('saves')
+        .delete()
+        .eq('id', id);
+      if (error) console.error('Delete failed:', error);
+    }, 5000);
+
+    this.showSwipeToast('Deleted', () => {
+      cancelled = true;
+      clearTimeout(timeoutId);
+      this.loadSaves();
+    }, 5000);
+  }
+
+  showSwipeToast(message, onUndo, duration = 3500) {
+    document.getElementById('swipe-toast')?.remove();
+
+    const toast = document.createElement('div');
+    toast.id = 'swipe-toast';
+    toast.className = 'swipe-toast';
+
+    const msg = document.createElement('span');
+    msg.textContent = message;
+    toast.appendChild(msg);
+
+    const undoBtn = document.createElement('button');
+    undoBtn.className = 'swipe-toast-undo';
+    undoBtn.textContent = 'Undo';
+    toast.appendChild(undoBtn);
+
+    document.body.appendChild(toast);
+
+    let undone = false;
+    undoBtn.addEventListener('click', () => {
+      if (undone) return;
+      undone = true;
+      toast.remove();
+      onUndo();
+    });
+
+    setTimeout(() => {
+      if (undone) return;
+      toast.classList.add('hiding');
+      setTimeout(() => toast.remove(), 200);
+    }, duration);
   }
 
   getWeekDateRange() {

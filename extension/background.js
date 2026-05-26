@@ -1,7 +1,12 @@
 // Background service worker
 // Handles context menus and saving
 
-importScripts('config.js', 'supabase.js');
+// Chrome MV3 runs this as a service worker, where importScripts loads deps.
+// Firefox loads background.scripts as a page where deps are already global,
+// and importScripts is not defined — so guard the call.
+if (typeof importScripts !== 'undefined') {
+  importScripts('config.js', 'supabase.js');
+}
 
 let supabase = null;
 
