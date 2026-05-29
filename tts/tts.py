@@ -27,6 +27,28 @@ except ImportError:
     print("Error: edge-tts not installed. Run: pip install edge-tts")
     sys.exit(1)
 
+def _load_dotenv():
+    """Load KEY=VALUE pairs from a sibling .env into os.environ.
+
+    Kept dependency-free (no python-dotenv) and run before config is read so
+    the service-role key can live in a gitignored tts/.env instead of the
+    repo or the LaunchAgent plist. Existing env vars win, so launchd/shell
+    overrides still take precedence.
+    """
+    env_path = Path(__file__).parent / ".env"
+    if not env_path.exists():
+        return
+    for raw in env_path.read_text().splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key, val = key.strip(), val.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = val
+
+_load_dotenv()
+
 # Configuration - prefer env vars so you can use service role for Storage writes
 SUPABASE_URL = os.getenv("STASH_SUPABASE_URL", "https://fvydjrhqaeemkdakqnfk.supabase.co")
 SUPABASE_KEY = os.getenv(

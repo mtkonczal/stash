@@ -17,6 +17,8 @@ npm-debug.log
 
 # Local config with real credentials
 config.local.js
+.env
+tts/.env
 
 # Vercel
 .vercel/
