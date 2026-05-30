@@ -1326,6 +1326,78 @@ input, select {
   color: var(--danger);
 }
 
+/* Add Link */
+.add-link-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.add-link-description {
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin: 0 0 16px;
+}
+
+.add-link-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.add-link-form label {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.add-link-form input[type="url"] {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 14px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.add-link-form input[type="url"]:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+.add-link-status {
+  margin-top: 14px;
+  padding: 12px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  text-align: center;
+}
+
+.add-link-status.info {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+
+.add-link-status.success {
+  background: rgba(16, 185, 129, 0.1);
+  color: var(--success);
+}
+
+.add-link-status.error {
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--danger);
+}
+
+/* On narrow screens, drop the button label and show just the + icon */
+@media (max-width: 640px) {
+  .add-link-btn span {
+    display: none;
+  }
+}
+
 /* Digest settings button in nav */
 .digest-settings-btn {
   margin-left: 26px;

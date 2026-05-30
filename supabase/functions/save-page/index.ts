@@ -1,11 +1,14 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { parseHTML } from "https://esm.sh/linkedom@0.16.8";
-import { Readability } from "https://esm.sh/@mozilla/readability@0.5.0";
+// npm: specifiers, not esm.sh: Deno treats linkedom's `canvas` as an optional
+// dependency and skips it, whereas esm.sh tries to bundle canvas's native
+// binding and fails ("Module not found canvas.node").
+import { parseHTML } from "npm:linkedom@0.16.8";
+import { Readability } from "npm:@mozilla/readability@0.5.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 

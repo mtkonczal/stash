@@ -56,7 +56,7 @@ SUPABASE_KEY = os.getenv(
     os.getenv("STASH_SUPABASE_KEY", "sb_publishable_MkrRsrV7RAyYyTqkod_BxQ_4FdBY28I"),
 )
 USER_ID = os.getenv("STASH_USER_ID", "ab4b8518-354a-4c5e-a826-0b0a5c48cb57")
-CHECK_INTERVAL = 120  # seconds between checks
+CHECK_INTERVAL = 3600  # seconds between checks (hourly; backlog drains 5/cycle)
 LOG_FILE = Path(__file__).parent / "tts.log"
 
 # TTS Settings
@@ -92,7 +92,7 @@ def get_pending_saves():
         "audio_url": "is.null",  # Only saves without audio
         "is_archived": "eq.false",
         "order": "created_at.desc",
-        "limit": "5"  # Process 5 at a time
+        "limit": "50"  # Per-cycle cap; high enough to drain a backlog, harmless once caught up
     }
 
     response = requests.get(url, headers=get_headers(), params=params)

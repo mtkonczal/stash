@@ -261,6 +261,34 @@ class StashApp {
     document.getElementById('digest-enabled').addEventListener('change', () => {
       this.updateDigestOptionsState();
     });
+
+    // Add Link
+    const addLinkModal = document.getElementById('add-link-modal');
+
+    document.getElementById('add-link-btn').addEventListener('click', () => {
+      this.showAddLinkModal();
+    });
+    document.getElementById('empty-add-link-btn').addEventListener('click', () => {
+      this.showAddLinkModal();
+    });
+    addLinkModal.querySelector('.modal-overlay').addEventListener('click', () => {
+      this.hideAddLinkModal();
+    });
+    addLinkModal.querySelector('.modal-close-btn').addEventListener('click', () => {
+      this.hideAddLinkModal();
+    });
+    document.getElementById('add-link-cancel-btn').addEventListener('click', () => {
+      this.hideAddLinkModal();
+    });
+    document.getElementById('add-link-save-btn').addEventListener('click', () => {
+      this.saveLinkFromUrl();
+    });
+    document.getElementById('add-link-url').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        this.saveLinkFromUrl();
+      }
+    });
   }
 
   showAuthScreen() {
@@ -1453,6 +1481,99 @@ class StashApp {
     const modal = document.getElementById('kindle-import-modal');
     modal.classList.add('hidden');
     this.resetKindleImportModal();
+  }
+
+  // --- Add Link (paste a URL to save) ---
+
+  showAddLinkModal() {
+    document.getElementById('add-link-modal').classList.remove('hidden');
+    this.resetAddLinkModal();
+    // Focus after the modal paints so the cursor lands in the field
+    setTimeout(() => document.getElementById('add-link-url').focus(), 50);
+  }
+
+  hideAddLinkModal() {
+    document.getElementById('add-link-modal').classList.add('hidden');
+  }
+
+  resetAddLinkModal() {
+    const input = document.getElementById('add-link-url');
+    input.value = '';
+    input.disabled = false;
+    const status = document.getElementById('add-link-status');
+    status.className = 'add-link-status hidden';
+    status.textContent = '';
+    const saveBtn = document.getElementById('add-link-save-btn');
+    saveBtn.disabled = false;
+    saveBtn.textContent = 'Save';
+  }
+
+  setAddLinkStatus(message, type) {
+    // type: 'info' | 'success' | 'error'
+    const status = document.getElementById('add-link-status');
+    status.textContent = message;
+    status.className = `add-link-status ${type}`;
+  }
+
+  async saveLinkFromUrl() {
+    const input = document.getElementById('add-link-url');
+    const saveBtn = document.getElementById('add-link-save-btn');
+    let url = (input.value || '').trim();
+
+    if (!url) {
+      this.setAddLinkStatus('Paste a URL to save.', 'error');
+      return;
+    }
+    // Be forgiving: prepend https:// if the scheme is missing
+    if (!/^https?:\/\//i.test(url)) {
+      url = 'https://' + url;
+    }
+    try {
+      new URL(url);
+    } catch {
+      this.setAddLinkStatus("That doesn't look like a valid URL.", 'error');
+      return;
+    }
+
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving…';
+    input.disabled = true;
+    this.setAddLinkStatus('Fetching and extracting the article…', 'info');
+
+    try {
+      // Server-side fetch + Readability via the save-page Edge Function.
+      // A browser can't fetch arbitrary sites directly (CORS), so extraction
+      // happens server-side, same path the extension uses for paywalled pages.
+      const response = await fetch(`${CONFIG.SUPABASE_URL}/functions/v1/save-page`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': CONFIG.SUPABASE_ANON_KEY,
+          'Authorization': `Bearer ${CONFIG.SUPABASE_ANON_KEY}`,
+        },
+        body: JSON.stringify({
+          url,
+          user_id: CONFIG.USER_ID,
+          source: 'web',
+        }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || `Save failed (HTTP ${response.status}).`);
+      }
+
+      this.setAddLinkStatus('Saved! Audio will generate shortly.', 'success');
+      await this.loadSaves();
+      setTimeout(() => this.hideAddLinkModal(), 700);
+    } catch (err) {
+      console.error('Add link failed:', err);
+      this.setAddLinkStatus(err.message || 'Something went wrong saving that link.', 'error');
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Save';
+      input.disabled = false;
+    }
   }
 
   resetKindleImportModal() {
