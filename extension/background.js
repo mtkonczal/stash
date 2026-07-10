@@ -162,11 +162,24 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
-  if (request.action === 'signIn') {
+  if (request.action === 'requestOtp') {
     (async () => {
       if (!supabase) await initSupabase();
       try {
-        await supabase.signIn(request.email, request.password);
+        await supabase.requestOtp(request.email);
+        sendResponse({ success: true });
+      } catch (err) {
+        sendResponse({ success: false, error: err.message });
+      }
+    })();
+    return true;
+  }
+
+  if (request.action === 'verifyOtp') {
+    (async () => {
+      if (!supabase) await initSupabase();
+      try {
+        await supabase.verifyOtp(request.email, request.token);
         const user = await supabase.getUser();
         sendResponse({ success: true, user });
       } catch (err) {

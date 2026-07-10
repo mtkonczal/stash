@@ -4,8 +4,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   const mainView = document.getElementById('main-view');
   const authForm = document.getElementById('auth-form');
   const authError = document.getElementById('auth-error');
+  const authMessage = document.getElementById('auth-message');
   const signinBtn = document.getElementById('signin-btn');
-  const signupBtn = document.getElementById('signup-btn');
+  const otpInput = document.getElementById('otp-code');
   const signoutBtn = document.getElementById('signout-btn');
   const savePageBtn = document.getElementById('save-page-btn');
   const savesList = document.getElementById('saves-list');
@@ -31,59 +32,81 @@ document.addEventListener('DOMContentLoaded', async () => {
     mainView.classList.remove('hidden');
   }
 
-  // Sign in
+  // Sign in: two-step email OTP. Step 1 emails a one-time 6-digit code
+  // (existing account only — no signup path; this is a single-user app),
+  // step 2 exchanges it for a session.
   authForm.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const email = document.getElementById('email').value;
-    const password = document.getElementById('password').value;
-
-    signinBtn.disabled = true;
-    signinBtn.textContent = 'Signing in...';
+    const email = document.getElementById('email').value.trim();
     authError.textContent = '';
 
+    if (otpInput.disabled) {
+      // Step 1: request the code
+      signinBtn.disabled = true;
+      signinBtn.textContent = 'Sending code...';
+
+      const response = await chrome.runtime.sendMessage({
+        action: 'requestOtp',
+        email,
+      });
+
+      signinBtn.disabled = false;
+      if (response.success) {
+        authMessage.textContent = 'Code sent — check your email.';
+        otpInput.disabled = false;
+        otpInput.classList.remove('hidden');
+        otpInput.focus();
+        document.getElementById('email').disabled = true;
+        signinBtn.textContent = 'Verify Code';
+      } else {
+        authError.textContent = response.error;
+        signinBtn.textContent = 'Send Code';
+      }
+      return;
+    }
+
+    // Step 2: verify the code
+    const token = otpInput.value.trim();
+    if (!token) {
+      authError.textContent = 'Enter the code from your email';
+      return;
+    }
+
+    signinBtn.disabled = true;
+    signinBtn.textContent = 'Verifying...';
+
     const response = await chrome.runtime.sendMessage({
-      action: 'signIn',
+      action: 'verifyOtp',
       email,
-      password,
+      token,
     });
 
     if (response.success) {
+      resetAuthForm();
       showMainView();
       loadRecentSaves();
     } else {
       authError.textContent = response.error;
+      signinBtn.disabled = false;
+      signinBtn.textContent = 'Verify Code';
     }
+  });
 
+  function resetAuthForm() {
+    otpInput.value = '';
+    otpInput.disabled = true;
+    otpInput.classList.add('hidden');
+    document.getElementById('email').disabled = false;
     signinBtn.disabled = false;
-    signinBtn.textContent = 'Sign In';
-  });
-
-  // Sign up
-  signupBtn.addEventListener('click', async () => {
-    const email = document.getElementById('email').value;
-    const password = document.getElementById('password').value;
-
-    if (!email || !password) {
-      authError.textContent = 'Please enter email and password';
-      return;
-    }
-
-    signupBtn.disabled = true;
-    signupBtn.textContent = 'Signing up...';
+    signinBtn.textContent = 'Send Code';
     authError.textContent = '';
-
-    // For signup, we'll redirect to the web app
-    // Supabase email confirmation is required by default
-    const signupUrl = `${CONFIG.WEB_APP_URL}/signup`;
-    chrome.tabs.create({ url: signupUrl });
-
-    signupBtn.disabled = false;
-    signupBtn.textContent = 'Sign Up';
-  });
+    authMessage.textContent = '';
+  }
 
   // Sign out
   signoutBtn.addEventListener('click', async () => {
     await chrome.runtime.sendMessage({ action: 'signOut' });
+    resetAuthForm();
     showAuthView();
   });
 

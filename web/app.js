@@ -89,14 +89,15 @@ class StashApp {
   }
 
   bindEvents() {
-    // Auth form
+    // Auth form: two-step email OTP (send code, then verify)
     document.getElementById('auth-form').addEventListener('submit', (e) => {
       e.preventDefault();
-      this.signIn();
-    });
-
-    document.getElementById('signup-btn').addEventListener('click', () => {
-      this.signUp();
+      const codeInput = document.getElementById('otp-code');
+      if (codeInput.disabled) {
+        this.requestCode();
+      } else {
+        this.verifyCode();
+      }
     });
 
     document.getElementById('signout-btn').addEventListener('click', () => {
@@ -317,6 +318,20 @@ class StashApp {
   showAuthScreen() {
     document.getElementById('auth-screen').classList.remove('hidden');
     document.getElementById('main-screen').classList.add('hidden');
+    this.resetAuthForm();
+  }
+
+  resetAuthForm() {
+    const codeInput = document.getElementById('otp-code');
+    codeInput.value = '';
+    codeInput.disabled = true;
+    codeInput.classList.add('hidden');
+    document.getElementById('email').disabled = false;
+    const btn = document.getElementById('signin-btn');
+    btn.disabled = false;
+    btn.textContent = 'Send Code';
+    document.getElementById('auth-error').textContent = '';
+    document.getElementById('auth-message').textContent = '';
   }
 
   showMainScreen() {
@@ -324,64 +339,79 @@ class StashApp {
     document.getElementById('main-screen').classList.remove('hidden');
   }
 
-  async signIn() {
-    const email = document.getElementById('email').value;
-    const password = document.getElementById('password').value;
-    const errorEl = document.getElementById('auth-error');
-    const btn = document.getElementById('signin-btn');
-
-    btn.disabled = true;
-    btn.textContent = 'Signing in...';
-    errorEl.textContent = '';
-
-    const { error } = await this.supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-
-    if (error) {
-      errorEl.textContent = error.message;
-    }
-
-    btn.disabled = false;
-    btn.textContent = 'Sign In';
-  }
-
-  async signUp() {
-    const email = document.getElementById('email').value;
-    const password = document.getElementById('password').value;
+  // Step 1: email a one-time 6-digit code.
+  // shouldCreateUser: false — this is a single-user app; an unknown email
+  // is rejected server-side rather than creating an account. Belt and
+  // suspenders with the dashboard's "Allow new users to sign up" being off.
+  async requestCode() {
+    const email = document.getElementById('email').value.trim();
     const errorEl = document.getElementById('auth-error');
     const messageEl = document.getElementById('auth-message');
-    const btn = document.getElementById('signup-btn');
+    const btn = document.getElementById('signin-btn');
 
-    if (!email || !password) {
-      errorEl.textContent = 'Please enter email and password';
-      return;
-    }
-
-    if (password.length < 6) {
-      errorEl.textContent = 'Password must be at least 6 characters';
+    if (!email) {
+      errorEl.textContent = 'Please enter your email';
       return;
     }
 
     btn.disabled = true;
-    btn.textContent = 'Creating account...';
+    btn.textContent = 'Sending code...';
     errorEl.textContent = '';
     messageEl.textContent = '';
 
-    const { error } = await this.supabase.auth.signUp({
+    const { error } = await this.supabase.auth.signInWithOtp({
       email,
-      password,
+      options: { shouldCreateUser: false },
     });
 
     if (error) {
       errorEl.textContent = error.message;
-    } else {
-      messageEl.textContent = 'Check your email to confirm your account!';
+      btn.disabled = false;
+      btn.textContent = 'Send Code';
+      return;
     }
 
+    messageEl.textContent = 'Code sent — check your email.';
+    const codeInput = document.getElementById('otp-code');
+    codeInput.disabled = false;
+    codeInput.classList.remove('hidden');
+    codeInput.focus();
+    document.getElementById('email').disabled = true;
     btn.disabled = false;
-    btn.textContent = 'Create Account';
+    btn.textContent = 'Verify Code';
+  }
+
+  // Step 2: verify the code. Single-use, expires server-side, and verify
+  // attempts are rate-limited by GoTrue — which is why a short code is
+  // safe here where a static 4-digit password would not be.
+  async verifyCode() {
+    const email = document.getElementById('email').value.trim();
+    const token = document.getElementById('otp-code').value.trim();
+    const errorEl = document.getElementById('auth-error');
+    const btn = document.getElementById('signin-btn');
+
+    if (!token) {
+      errorEl.textContent = 'Enter the code from your email';
+      return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = 'Verifying...';
+    errorEl.textContent = '';
+
+    const { error } = await this.supabase.auth.verifyOtp({
+      email,
+      token,
+      type: 'email',
+    });
+
+    if (error) {
+      errorEl.textContent = error.message;
+      btn.disabled = false;
+      btn.textContent = 'Verify Code';
+      return;
+    }
+    // Success: onAuthStateChange shows the main screen and loads data
   }
 
   async signOut() {

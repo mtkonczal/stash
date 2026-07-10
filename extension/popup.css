@@ -128,6 +128,12 @@ input:focus {
   margin-top: 8px;
 }
 
+.message {
+  color: #10b981;
+  font-size: 13px;
+  margin-top: 8px;
+}
+
 /* Actions */
 .actions {
   display: flex;

@@ -8,12 +8,16 @@ independently reversible.
 ## What changed in the code (summary)
 
 - **web/**: real auth required (session-gated `init()`, `onAuthStateChange`);
-  `save-page` calls send the user JWT; `USER_ID` removed from config;
-  stored-XSS fixes (DOMPurify on article content, attribute/URL escaping);
-  `save.html` uses the shared session instead of a hardcoded user + anon REST.
-- **extension/**: sign-in required (popup gates on session); session persisted
-  with refresh-token handling; `user_id` comes from the session; `USER_ID`
-  removed from config; popup URL injection fixed.
+  login is **email OTP** (6-digit one-time code, `shouldCreateUser: false`,
+  no signup path); `save-page` calls send the user JWT; `USER_ID` removed
+  from config; stored-XSS fixes (DOMPurify on article content, attribute/URL
+  escaping); `save.html` uses the shared session instead of a hardcoded
+  user + anon REST.
+- **extension/**: sign-in required (popup gates on session); login is the
+  same email OTP flow (`/auth/v1/otp` → `/auth/v1/verify`, `create_user:
+  false`, signup button removed); session persisted with refresh-token
+  handling; `user_id` comes from the session; `USER_ID` removed from
+  config; popup URL injection fixed.
 - **supabase/functions/**: `save-page` and `save-kindle` now verify the
   caller's JWT and derive `user_id` server-side (they use the service-role
   key, which bypasses RLS, so trusting a body `user_id` meant anyone could
@@ -45,12 +49,26 @@ Set these function secrets:
 (`SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` are
 auto-injected by Supabase; nothing to do.)
 
+### 1b. Auth settings for single-user email-OTP login (dashboard → Authentication)
+
+- **Sign In / Up → turn OFF "Allow new users to sign up".** This is the
+  server-side lock; the clients also pass `shouldCreateUser: false`, but
+  the dashboard toggle is what actually guarantees no one else can register.
+- **Email Templates → "Magic Link": make sure the body includes
+  `{{ .Token }}`** (e.g. "Your login code is {{ .Token }}"). The default
+  template only contains a link; the new login form asks for the 6-digit
+  code, which is `{{ .Token }}`.
+- Optional: shorten the OTP expiry (Sign In / Up → Email OTP expiry;
+  default 3600s — 300–600s is plenty for a personal app).
+- Optional hardening: the password grant still exists for your account
+  even though no UI uses it. Set your account password to a long random
+  string (Authentication → Users → your user → reset password) so email
+  OTP is the only practical way in.
+
 ### 2. Deploy the edge functions
 
 ```bash
-supabase functions deploy save-page --no-verify-jwt
-supabase functions deploy save-kindle
-supabase functions deploy send-digest --no-verify-jwt
+ 
 ```
 
 `--no-verify-jwt` on `save-page` is required because the bookmarklet
@@ -64,16 +82,16 @@ If a cron job triggers `send-digest`, update it to send the header
 
 ### 3. Deploy the web app
 
-Push `web/` to Vercel as usual. Confirm you can sign in (the user created
-during initial setup per SETUP.md step 3), and that saves list loads.
-Session persists in localStorage, so this is a one-time login per browser.
+Push `web/` to Vercel as usual. Sign in with your email → 6-digit code
+from your inbox, and confirm the saves list loads. Session persists in
+localStorage, so this is roughly a one-time login per browser.
 
 ### 4. Reload the extension and sign in
 
 Reload the unpacked extension (and rebuild `stash.xpi` for Firefox — the
-current xpi predates these fixes). Open the popup; it will now show the
-sign-in form. Sign in once; the session is stored in `chrome.storage.local`
-and auto-refreshes.
+current xpi predates these fixes). Open the popup; it now shows the email
+OTP form (send code → enter code). Sign in once; the session is stored in
+`chrome.storage.local` and auto-refreshes.
 
 ### 5. Regenerate the bookmarklet + restart TTS
 
@@ -100,6 +118,8 @@ Do this only after 1–5 all work.
   header → expect 401; with it and a `user_id` in the body → email arrives.
 - save-page without auth: `curl -X POST .../functions/v1/save-page -d '{"url":"https://example.com"}'`
   → expect 401.
+- Lockout: request a login code for an email that isn't yours → expect
+  "Signups not allowed for otp" (i.e., no code is sent, no account created).
 - Cross-account: create a second auth user, sign in from a clean browser
   profile → they must see zero saves.
 - Supabase dashboard → Advisors: `rls_disabled_in_public` warnings clear.
@@ -122,9 +142,9 @@ off (everything still works signed-in), so only the SQL needs reverting.
   RLS is on), but if you want a clean slate after months of exposure with
   RLS off, you can rotate the publishable key in the dashboard and update
   `web/config.js` + `extension/config.js`.
-- **Password strength**: the web app allows 6-character passwords; consider
-  raising the minimum in Supabase Auth settings since this account guards
-  everything.
+- **Email deliverability**: login now depends on receiving the OTP email.
+  Supabase's built-in sender is fine for single-user, but if codes land in
+  spam, point Auth SMTP at your existing Resend account.
 - **`stash.xpi`** in the repo root is a stale build with the old insecure
   flow; rebuild or delete it.
 - **CSP for the web app**: a `Content-Security-Policy` header on Vercel

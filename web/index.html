@@ -35,9 +35,8 @@
 
         <form id="auth-form">
           <input type="email" id="email" placeholder="Email" required>
-          <input type="password" id="password" placeholder="Password" required>
-          <button type="submit" class="btn primary" id="signin-btn">Sign In</button>
-          <button type="button" class="btn secondary" id="signup-btn">Create Account</button>
+          <input type="text" id="otp-code" placeholder="6-digit code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" class="hidden" disabled>
+          <button type="submit" class="btn primary" id="signin-btn">Send Code</button>
         </form>
         <p id="auth-error" class="error"></p>
         <p id="auth-message" class="message"></p>

@@ -80,42 +80,47 @@ class SupabaseClient {
     return this.session.user.id;
   }
 
-  async signIn(email, password) {
-    const res = await fetch(`${this.url}/auth/v1/token?grant_type=password`, {
+  // Step 1 of email OTP sign-in: email a one-time 6-digit code.
+  // create_user: false — single-user app; unknown emails are rejected
+  // server-side instead of creating an account.
+  async requestOtp(email) {
+    const res = await fetch(`${this.url}/auth/v1/otp`, {
       method: 'POST',
       headers: {
         'apikey': this.anonKey,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({ email, create_user: false }),
     });
 
     if (!res.ok) {
       const err = await res.json();
-      throw new Error(err.error_description || err.msg || 'Sign in failed');
+      throw new Error(err.error_description || err.msg || 'Could not send code');
+    }
+
+    return true;
+  }
+
+  // Step 2: exchange the emailed code for a session. Codes are single-use,
+  // expire server-side, and verification is rate-limited by GoTrue.
+  async verifyOtp(email, token) {
+    const res = await fetch(`${this.url}/auth/v1/verify`, {
+      method: 'POST',
+      headers: {
+        'apikey': this.anonKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ type: 'email', email, token }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error_description || err.msg || 'Invalid or expired code');
     }
 
     const data = await res.json();
     await this._storeSession(data);
     return data;
-  }
-
-  async signUp(email, password) {
-    const res = await fetch(`${this.url}/auth/v1/signup`, {
-      method: 'POST',
-      headers: {
-        'apikey': this.anonKey,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ email, password }),
-    });
-
-    if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.error_description || err.msg || 'Sign up failed');
-    }
-
-    return await res.json();
   }
 
   async signOut() {
