@@ -1,152 +1,136 @@
-# Security Fix Deployment Checklist
+# Deployment Checklist: Security Fix (2026-07-09)
 
-Code-side fixes were implemented on 2026-07-09 (see git diff). This file
-covers the steps that must happen in the Supabase dashboard / your machine,
-**in this order**. Nothing breaks until step 6, and each step is
-independently reversible.
+This covers **one thing**: deploying the security fix now sitting in the
+repo (uncommitted as of this writing). The code side is done; these are
+the dashboard and deploy steps only you can do. Do them **in order** —
+nothing breaks until step 5, and each step is independently reversible.
 
-## What changed in the code (summary)
+The fix, in one paragraph: every client now authenticates (the web app and
+extension via email OTP login, the bookmarklet via a secret token, TTS via
+the service-role key), the edge functions verify their callers instead of
+trusting a client-supplied `user_id` while writing with the service-role
+key, stored-XSS holes in the reading pane / popup / digest emails are
+closed, and — the step Supabase has been flagging — RLS gets re-enabled
+on all five tables. Hardcoded `USER_ID` values are gone from all configs.
 
-- **web/**: real auth required (session-gated `init()`, `onAuthStateChange`);
-  login is **email OTP** (6-digit one-time code, `shouldCreateUser: false`,
-  no signup path); `save-page` calls send the user JWT; `USER_ID` removed
-  from config; stored-XSS fixes (DOMPurify on article content, attribute/URL
-  escaping); `save.html` uses the shared session instead of a hardcoded
-  user + anon REST.
-- **extension/**: sign-in required (popup gates on session); login is the
-  same email OTP flow (`/auth/v1/otp` → `/auth/v1/verify`, `create_user:
-  false`, signup button removed); session persisted with refresh-token
-  handling; `user_id` comes from the session; `USER_ID` removed from
-  config; popup URL injection fixed.
-- **supabase/functions/**: `save-page` and `save-kindle` now verify the
-  caller's JWT and derive `user_id` server-side (they use the service-role
-  key, which bypasses RLS, so trusting a body `user_id` meant anyone could
-  write as anyone). `save-page` also accepts an `X-Stash-Token` secret for
-  the bookmarklet. `send-digest` requires an `X-Cron-Secret` header and
-  HTML-escapes untrusted content in emails.
-- **bookmarklet/**: secret-token auth; no `user_id` sent.
-- **tts/tts.py**: refuses to start without the service-role key and an
-  explicit `STASH_USER_ID`; no more silent fallback to the publishable key.
-- **supabase/**: migration to re-enable RLS + fix the `save_tags` insert
-  policy (must own both the save and the tag); `schema.sql` updated to match.
+## 1. Supabase dashboard: secrets and auth settings
 
-## Deployment steps
-
-### 1. Secrets (Supabase dashboard → Edge Functions → Secrets)
+**Edge Function secrets** (Dashboard → Edge Functions → Secrets):
 
 ```bash
-# Generate the bookmarklet token locally:
-openssl rand -hex 32
+# Generate two tokens locally:
+openssl rand -hex 32   # STASH_BOOKMARKLET_TOKEN
+openssl rand -hex 32   # CRON_SECRET
 ```
 
-Set these function secrets:
-
-- `STASH_BOOKMARKLET_TOKEN` = the token you just generated
-- `STASH_BOOKMARKLET_USER_ID` = your auth user id (Authentication → Users)
-- `CRON_SECRET` = another `openssl rand -hex 32` output
-- `RESEND_API_KEY` = (already set if digests work today)
+| Secret | Value |
+|---|---|
+| `STASH_BOOKMARKLET_TOKEN` | first token above |
+| `STASH_BOOKMARKLET_USER_ID` | your auth user id (Authentication → Users) |
+| `CRON_SECRET` | second token above |
+| `RESEND_API_KEY` | already set if digests work today |
 
 (`SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` are
-auto-injected by Supabase; nothing to do.)
+auto-injected; nothing to do.)
 
-### 1b. Auth settings for single-user email-OTP login (dashboard → Authentication)
+**Auth settings** (Dashboard → Authentication) — login is now email OTP,
+single user:
 
-- **Sign In / Up → turn OFF "Allow new users to sign up".** This is the
-  server-side lock; the clients also pass `shouldCreateUser: false`, but
-  the dashboard toggle is what actually guarantees no one else can register.
-- **Email Templates → "Magic Link": make sure the body includes
-  `{{ .Token }}`** (e.g. "Your login code is {{ .Token }}"). The default
-  template only contains a link; the new login form asks for the 6-digit
-  code, which is `{{ .Token }}`.
-- Optional: shorten the OTP expiry (Sign In / Up → Email OTP expiry;
-  default 3600s — 300–600s is plenty for a personal app).
-- Optional hardening: the password grant still exists for your account
-  even though no UI uses it. Set your account password to a long random
-  string (Authentication → Users → your user → reset password) so email
-  OTP is the only practical way in.
+- Sign In / Up → **turn OFF "Allow new users to sign up"**. This is the
+  server-side lock. The clients also send `shouldCreateUser: false`, but
+  the toggle is what guarantees no one else can register.
+- Email Templates → "Magic Link" → body must include **`{{ .Token }}`**
+  (e.g. "Your login code is {{ .Token }}"). The default template only has
+  a link; the login form asks for the code, which is `{{ .Token }}`.
+- Optional: shorten Email OTP expiry (default 3600s; 300–600s is plenty).
+- Optional: set your account password to a long random string
+  (Authentication → Users → reset password). No UI uses passwords anymore,
+  so this neutralizes the unused password grant.
 
-### 2. Deploy the edge functions
+## 2. Deploy the edge functions
 
 ```bash
- 
+supabase functions deploy save-page --no-verify-jwt
+supabase functions deploy save-kindle
+supabase functions deploy send-digest --no-verify-jwt
 ```
 
-`--no-verify-jwt` on `save-page` is required because the bookmarklet
-authenticates with `X-Stash-Token`, not a JWT; the function does its own
-auth (401 without a valid JWT **or** token). Same for `send-digest`
-(cron secret instead of JWT). `save-kindle` keeps gateway JWT verification
-on top of its in-function check.
+`--no-verify-jwt` is required on `save-page` (bookmarklet authenticates
+with `X-Stash-Token`, not a JWT) and `send-digest` (cron secret instead of
+a JWT); both do their own auth in-function and return 401 otherwise.
+`save-kindle` keeps gateway JWT verification on top of its in-function check.
 
 If a cron job triggers `send-digest`, update it to send the header
 `X-Cron-Secret: <CRON_SECRET>`.
 
-### 3. Deploy the web app
+## 3. Deploy the clients
 
-Push `web/` to Vercel as usual. Sign in with your email → 6-digit code
-from your inbox, and confirm the saves list loads. Session persists in
-localStorage, so this is roughly a one-time login per browser.
+- **Web app**: push `web/` to Vercel. Sign in (email → one-time code from
+  your inbox) and confirm the saves list loads. The session persists in
+  localStorage, so this is roughly a one-time login per browser.
+- **Extension**: reload the unpacked extension; rebuild `stash.xpi` for
+  Firefox (the current xpi predates the fix). The popup now shows the
+  send-code / enter-code form. Sign in once; the session lives in
+  `chrome.storage.local` and auto-refreshes.
+- **Bookmarklet**: open `bookmarklet/install.html` (or `/bookmarklet.html`
+  on the web app), paste `STASH_BOOKMARKLET_TOKEN`, drag the new button to
+  the bookmarks bar, and delete the old one — it stops working at step 5.
 
-### 4. Reload the extension and sign in
+## 4. TTS daemon
 
-Reload the unpacked extension (and rebuild `stash.xpi` for Firefox — the
-current xpi predates these fixes). Open the popup; it now shows the email
-OTP form (send code → enter code). Sign in once; the session is stored in
-`chrome.storage.local` and auto-refreshes.
+In `tts/.env`: confirm `STASH_SUPABASE_SERVICE_ROLE_KEY` is the
+**service_role** key (not the publishable one) and add
+`STASH_USER_ID=<your user id>` — both are now required; the daemon exits
+with a FATAL message if either is missing or wrong. Restart the launchd job.
 
-### 5. Regenerate the bookmarklet + restart TTS
+## 5. Re-enable RLS
 
-- Open `bookmarklet/install.html` (or `/bookmarklet.html` on the web app),
-  paste the `STASH_BOOKMARKLET_TOKEN`, drag the new bookmarklet to the bar,
-  delete the old one (it contains the old flow and stops working at step 6).
-- `tts/.env`: confirm `STASH_SUPABASE_SERVICE_ROLE_KEY` is the **service_role**
-  key and add `STASH_USER_ID=<your user id>` (now required). Restart the
-  launchd job; the daemon exits with a FATAL message if misconfigured.
+This is the fix Supabase's `rls_disabled_in_public` advisor is flagging.
+Only after steps 1–4 all work, run in the SQL Editor:
 
-### 6. Re-enable RLS (the actual fix Supabase is flagging)
+```
+supabase/migrations/2026-07-09_reenable_rls.sql
+```
 
-Run `supabase/migrations/2026-07-09_reenable_rls.sql` in the SQL Editor.
-Do this only after 1–5 all work.
+It flips RLS on for all five tables, fixes the `save_tags` insert policy
+(must own both the save and the tag), and defaults `user_id` to
+`auth.uid()`.
 
-### 7. Verify
+## 6. Verify
 
-- Web: load saves, create a save via Add Link, edit a tag, change digest
-  settings, play audio.
+- Web: load saves, Add Link, edit a tag, change digest settings, play audio.
 - Extension: save a page, save a highlight.
 - Bookmarklet: save a page from another browser.
 - TTS: `python tts.py --once` writes an `audio_url` back.
-- Digest: invoke `send-digest` manually **without** the `X-Cron-Secret`
-  header → expect 401; with it and a `user_id` in the body → email arrives.
-- save-page without auth: `curl -X POST .../functions/v1/save-page -d '{"url":"https://example.com"}'`
-  → expect 401.
-- Lockout: request a login code for an email that isn't yours → expect
-  "Signups not allowed for otp" (i.e., no code is sent, no account created).
-- Cross-account: create a second auth user, sign in from a clean browser
-  profile → they must see zero saves.
-- Supabase dashboard → Advisors: `rls_disabled_in_public` warnings clear.
+- Unauthenticated write blocked:
+  `curl -X POST .../functions/v1/save-page -d '{"url":"https://example.com"}'`
+  → 401.
+- Digest locked down: invoke `send-digest` without `X-Cron-Secret` → 401;
+  with it (+ `user_id` in the body) → email arrives.
+- Login locked down: request a code for an email that isn't yours →
+  "Signups not allowed for otp"; no code sent, no account created.
+- Cross-account isolation: create a second auth user, sign in from a clean
+  browser profile → zero saves visible.
+- Dashboard → Advisors: `rls_disabled_in_public` warnings clear.
 
-### 8. Rollback (if needed)
+## 7. Rollback
 
 Run the `disable row level security` block at the bottom of the migration
-file. No data is lost. The code changes are backward-compatible with RLS
-off (everything still works signed-in), so only the SQL needs reverting.
+file. No data is lost. The code changes work with RLS off (everything
+still functions signed-in), so only the SQL needs reverting.
 
-## Known remaining items (lower priority)
+## Out of scope (known items, lower priority — not part of this fix)
 
-- **Audio files are in a public storage bucket** — anyone with a save's
-  UUID can fetch its MP3. UUIDs aren't guessable, but for full privacy:
-  make the `audio` bucket private, add a storage RLS policy
-  (`auth.uid() = owner` or path-prefix per user), and let the web app's
-  existing `getSignedAudioUrl()` path handle playback (it already falls
-  back to signed URLs for non-public URLs).
-- **Anon key rotation is unnecessary** (it's designed to be public once
-  RLS is on), but if you want a clean slate after months of exposure with
-  RLS off, you can rotate the publishable key in the dashboard and update
-  `web/config.js` + `extension/config.js`.
-- **Email deliverability**: login now depends on receiving the OTP email.
-  Supabase's built-in sender is fine for single-user, but if codes land in
-  spam, point Auth SMTP at your existing Resend account.
-- **`stash.xpi`** in the repo root is a stale build with the old insecure
-  flow; rebuild or delete it.
-- **CSP for the web app**: a `Content-Security-Policy` header on Vercel
-  (script-src limited to self + jsdelivr) would add a second layer against
-  any future XSS.
+- **Public audio bucket**: MP3s are fetchable by anyone holding a save's
+  UUID. For full privacy: make the `audio` bucket private with a storage
+  RLS policy; the web app's `getSignedAudioUrl()` already handles signed
+  URLs.
+- **Anon key rotation**: unnecessary once RLS is on (the key is designed
+  to be public), but rotating it gives a clean slate after months of
+  exposure. Update `web/config.js` + `extension/config.js` if you do.
+- **Stale `stash.xpi`** in the repo root contains the old insecure flow;
+  rebuild or delete it.
+- **CSP header** on Vercel (script-src self + jsdelivr) as a second layer
+  against future XSS.
+- **Email deliverability**: login depends on the OTP email arriving. If
+  codes land in spam, point Auth SMTP at your existing Resend account.
