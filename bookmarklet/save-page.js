@@ -5,8 +5,10 @@
   const CONFIG = {
     // Replace with your Supabase Edge Function URL
     FUNCTION_URL: 'https://YOUR_PROJECT_ID.supabase.co/functions/v1/save-page',
-    // Replace with your user ID
-    USER_ID: 'YOUR_USER_ID',
+    // Long random secret matching the STASH_BOOKMARKLET_TOKEN function
+    // secret. The server maps it to your user id; the bookmarklet never
+    // sends a user_id. Generate with: openssl rand -hex 32
+    STASH_TOKEN: 'YOUR_BOOKMARKLET_TOKEN',
   };
 
   // Get selected text (if any) for highlight
@@ -70,13 +72,16 @@
     author: getMeta('author') || document.querySelector('[rel="author"], .author, .byline')?.innerText?.trim() || null,
   };
 
-  // Save via Edge Function with prefetched content
+  // Save via Edge Function with prefetched content.
+  // Auth: X-Stash-Token secret; the function derives user_id server-side.
   const saveRes = await fetch(CONFIG.FUNCTION_URL, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Stash-Token': CONFIG.STASH_TOKEN,
+    },
     body: JSON.stringify({
       url: originalUrl,
-      user_id: CONFIG.USER_ID,
       highlight: selection || null,
       source: 'bookmarklet',
       prefetched: selection ? null : prefetched, // Only send prefetched for full page saves

@@ -56,8 +56,11 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 // Save highlighted text
 async function saveHighlight(tab, selectionText) {
   try {
+    // Throws with a clear message if there's no valid session; RLS rejects
+    // any insert whose user_id doesn't match the JWT anyway.
+    const userId = await supabase.requireUserId();
     await supabase.insert('saves', {
-      user_id: CONFIG.USER_ID,
+      user_id: userId,
       url: tab.url,
       title: tab.title,
       highlight: selectionText,
@@ -83,6 +86,7 @@ async function saveHighlight(tab, selectionText) {
 async function savePage(tab) {
   try {
     console.log('savePage called for:', tab.url);
+    const userId = await supabase.requireUserId();
     let article;
 
     // Extract from current page - inject content script first if needed
@@ -110,7 +114,7 @@ async function savePage(tab) {
 
     console.log('Inserting into Supabase...');
     const result = await supabase.insert('saves', {
-      user_id: CONFIG.USER_ID,
+      user_id: userId,
       url: tab.url,
       title: article.title,
       content: article.content,

@@ -7,10 +7,53 @@ import { parseHTML } from "npm:linkedom@0.16.8";
 import { Readability } from "npm:@mozilla/readability@0.5.0";
 
 const corsHeaders = {
+  // "*" is acceptable here because the bookmarklet must POST from arbitrary
+  // origins; authentication is enforced in-function (JWT or secret token),
+  // not by origin.
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info",
+  "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info, x-stash-token",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
+
+// Constant-time string comparison for the bookmarklet secret
+function timingSafeEqual(a: string, b: string): boolean {
+  const enc = new TextEncoder();
+  const ab = enc.encode(a);
+  const bb = enc.encode(b);
+  if (ab.length !== bb.length) return false;
+  let diff = 0;
+  for (let i = 0; i < ab.length; i++) diff |= ab[i] ^ bb[i];
+  return diff === 0;
+}
+
+// Authenticate the caller and return the user_id to write as, or null.
+// This function uses the service-role key for DB writes (bypasses RLS), so
+// it MUST derive user_id server-side and never trust one from the body.
+// Two accepted callers:
+//   1. Signed-in user (web app / extension): Authorization: Bearer <user JWT>,
+//      verified against GoTrue.
+//   2. Bookmarklet: X-Stash-Token header matching the STASH_BOOKMARKLET_TOKEN
+//      function secret, mapped to STASH_BOOKMARKLET_USER_ID. It runs on
+//      arbitrary pages with no session, so a long random secret stands in.
+async function authenticateRequest(req: Request): Promise<string | null> {
+  const bookmarkletToken = Deno.env.get("STASH_BOOKMARKLET_TOKEN");
+  const headerToken = req.headers.get("x-stash-token");
+  if (bookmarkletToken && headerToken && timingSafeEqual(headerToken, bookmarkletToken)) {
+    return Deno.env.get("STASH_BOOKMARKLET_USER_ID") || null;
+  }
+
+  const authHeader = req.headers.get("authorization") || "";
+  const jwt = authHeader.replace(/^Bearer\s+/i, "");
+  if (!jwt) return null;
+
+  const anonClient = createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_ANON_KEY")!
+  );
+  const { data, error } = await anonClient.auth.getUser(jwt);
+  if (error || !data?.user) return null;
+  return data.user.id;
+}
 
 const BROWSER_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
@@ -72,11 +115,34 @@ serve(async (req) => {
   }
 
   try {
-    const { url, user_id, highlight, source, prefetched } = await req.json();
-
-    if (!url || !user_id) {
+    // user_id is derived from the verified caller, never from the body
+    const user_id = await authenticateRequest(req);
+    if (!user_id) {
       return new Response(
-        JSON.stringify({ error: "url and user_id required" }),
+        JSON.stringify({ error: "Unauthorized" }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    const { url, highlight, source, prefetched } = await req.json();
+
+    if (!url) {
+      return new Response(
+        JSON.stringify({ error: "url required" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // Only fetch/store http(s) URLs (blocks javascript:, file:, etc.)
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(url);
+      if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+        throw new Error("unsupported scheme");
+      }
+    } catch {
+      return new Response(
+        JSON.stringify({ error: "invalid url" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }

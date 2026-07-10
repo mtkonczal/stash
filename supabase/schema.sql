@@ -136,9 +136,13 @@ create policy "Users can view own save_tags" on save_tags
     exists (select 1 from saves where saves.id = save_id and saves.user_id = auth.uid())
   );
 
+-- Insert requires owning BOTH the save and the tag; checking only the save
+-- would let a user attach another user's tag to their own save.
 create policy "Users can insert own save_tags" on save_tags
   for insert with check (
     exists (select 1 from saves where saves.id = save_id and saves.user_id = auth.uid())
+    and
+    exists (select 1 from tags where tags.id = tag_id and tags.user_id = auth.uid())
   );
 
 create policy "Users can delete own save_tags" on save_tags

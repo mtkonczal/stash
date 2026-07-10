@@ -95,12 +95,12 @@
     <p class="hint">Add to Home Screen for quick access</p>
   </div>
 
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
   <script>
-    const CONFIG = {
-      SUPABASE_URL: 'https://YOUR_PROJECT_ID.supabase.co',
-      SUPABASE_ANON_KEY: 'YOUR_SUPABASE_ANON_KEY',
-      USER_ID: 'YOUR_USER_ID',
-    };
+    // Uses the same Supabase session as the main app (shared localStorage,
+    // same origin). If not signed in, redirects to the main app to log in.
+    const sb = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
 
     document.getElementById('save-form').addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -116,8 +116,16 @@
       status.className = 'status';
 
       try {
+        const { data: { session } } = await sb.auth.getSession();
+        if (!session) {
+          status.textContent = 'Not signed in — opening Stash to log in…';
+          status.className = 'status error';
+          setTimeout(() => { window.location.href = 'index.html'; }, 1200);
+          return;
+        }
+
         const data = {
-          user_id: CONFIG.USER_ID,
+          user_id: session.user.id,
           url: url,
           title: title || new URL(url).hostname,
           site_name: new URL(url).hostname.replace('www.', ''),
@@ -128,25 +136,14 @@
           data.highlight = highlight;
         }
 
-        const res = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/saves`, {
-          method: 'POST',
-          headers: {
-            'apikey': CONFIG.SUPABASE_ANON_KEY,
-            'Content-Type': 'application/json',
-            'Prefer': 'return=minimal',
-          },
-          body: JSON.stringify(data),
-        });
+        const { error } = await sb.from('saves').insert(data);
+        if (error) throw error;
 
-        if (res.ok) {
-          status.textContent = 'Saved!';
-          status.className = 'status success';
-          document.getElementById('url').value = '';
-          document.getElementById('title').value = '';
-          document.getElementById('highlight').value = '';
-        } else {
-          throw new Error('Save failed');
-        }
+        status.textContent = 'Saved!';
+        status.className = 'status success';
+        document.getElementById('url').value = '';
+        document.getElementById('title').value = '';
+        document.getElementById('highlight').value = '';
       } catch (err) {
         status.textContent = 'Failed to save. Check the URL.';
         status.className = 'status error';

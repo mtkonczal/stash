@@ -3,9 +3,26 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
+
+// Verify the caller's JWT and return their user id, or null. This function
+// writes with the service-role key (bypasses RLS), so user_id MUST come
+// from the verified token, never from the request body.
+async function authenticateRequest(req: Request): Promise<string | null> {
+  const authHeader = req.headers.get("authorization") || "";
+  const jwt = authHeader.replace(/^Bearer\s+/i, "");
+  if (!jwt) return null;
+
+  const anonClient = createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_ANON_KEY")!
+  );
+  const { data, error } = await anonClient.auth.getUser(jwt);
+  if (error || !data?.user) return null;
+  return data.user.id;
+}
 
 interface KindleHighlight {
   title: string;
@@ -20,11 +37,19 @@ serve(async (req) => {
   }
 
   try {
-    const { user_id, highlights } = await req.json();
-
-    if (!user_id || !highlights || !Array.isArray(highlights)) {
+    const user_id = await authenticateRequest(req);
+    if (!user_id) {
       return new Response(
-        JSON.stringify({ error: "user_id and highlights array required" }),
+        JSON.stringify({ error: "Unauthorized" }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    const { highlights } = await req.json();
+
+    if (!highlights || !Array.isArray(highlights)) {
+      return new Response(
+        JSON.stringify({ error: "highlights array required" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }

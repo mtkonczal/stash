@@ -1,8 +1,8 @@
-// Stash Web App (Single-user mode - no auth required)
+// Stash Web App
 class StashApp {
   constructor() {
     this.supabase = null;
-    this.user = { id: CONFIG.USER_ID }; // Hardcoded single user
+    this.user = null; // Set from the authenticated Supabase session
     this.currentView = 'all';
     this.currentSave = null;
     this.saves = [];
@@ -27,11 +27,34 @@ class StashApp {
     // Load theme preference
     this.loadTheme();
 
-    // Skip auth - go straight to main screen
-    this.showMainScreen();
-    this.loadData();
-
     this.bindEvents();
+
+    // Require a real session: RLS policies key off auth.uid(), so nothing
+    // works without one. The supabase-js client persists the session in
+    // localStorage, so this is a one-time login per browser.
+    const { data: { session } } = await this.supabase.auth.getSession();
+    if (session) {
+      this.user = session.user;
+      this.showMainScreen();
+      this.loadData();
+    } else {
+      this.showAuthScreen();
+    }
+
+    // Handle sign-in/sign-out transitions (including token refresh)
+    this.supabase.auth.onAuthStateChange((event, session) => {
+      if (session) {
+        const wasSignedOut = !this.user;
+        this.user = session.user;
+        if (wasSignedOut) {
+          this.showMainScreen();
+          this.loadData();
+        }
+      } else {
+        this.user = null;
+        this.showAuthScreen();
+      }
+    });
   }
 
   // Theme Management
@@ -453,7 +476,7 @@ class StashApp {
 
       return `
         <div class="save-card" data-id="${save.id}">
-          ${save.image_url ? `<img class="save-card-image" src="${save.image_url}" alt="" onerror="this.style.display='none'">` : ''}
+          ${save.image_url ? `<img class="save-card-image" src="${this.escapeAttr(this.safeUrl(save.image_url))}" alt="" onerror="this.style.display='none'">` : ''}
           <div class="save-card-content">
             <div class="save-card-site">${this.escapeHtml(save.site_name || '')}</div>
             <div class="save-card-title">${this.escapeHtml(save.title || 'Untitled')}</div>
@@ -616,7 +639,7 @@ class StashApp {
 
     return `
       <div class="save-card" data-id="${save.id}">
-        ${save.image_url ? `<img class="save-card-image" src="${save.image_url}" alt="" onerror="this.style.display='none'">` : ''}
+        ${save.image_url ? `<img class="save-card-image" src="${this.escapeAttr(this.safeUrl(save.image_url))}" alt="" onerror="this.style.display='none'">` : ''}
         <div class="save-card-content">
           <div class="save-card-site">${this.escapeHtml(save.site_name || '')}</div>
           <div class="save-card-title">${this.escapeHtml(save.title || 'Untitled')}</div>
@@ -895,8 +918,8 @@ class StashApp {
   renderFolders() {
     const container = document.getElementById('folders-list');
     container.innerHTML = this.folders.map(folder => `
-      <a href="#" class="nav-item" data-folder="${folder.id}">
-        <span style="color: ${folder.color}">📁</span>
+      <a href="#" class="nav-item" data-folder="${this.escapeAttr(folder.id)}">
+        <span style="color: ${this.escapeAttr(folder.color)}">📁</span>
         ${this.escapeHtml(folder.name)}
       </a>
     `).join('');
@@ -981,14 +1004,14 @@ class StashApp {
         <blockquote style="font-style: italic; background: #fef3c7; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
           "${this.escapeHtml(save.highlight)}"
         </blockquote>
-        <p><a href="${save.url}" target="_blank" style="color: var(--primary);">View original →</a></p>
+        <p><a href="${this.escapeAttr(this.safeUrl(save.url))}" target="_blank" rel="noopener noreferrer" style="color: var(--primary);">View original →</a></p>
       `;
     } else {
       const content = save.content || save.excerpt || 'No content available.';
       document.getElementById('reading-body').innerHTML = this.renderMarkdown(content);
     }
 
-    document.getElementById('open-original-btn').href = save.url || '#';
+    document.getElementById('open-original-btn').href = this.safeUrl(save.url);
 
     // Update button states
     document.getElementById('archive-btn').classList.toggle('active', save.is_archived);
@@ -1544,16 +1567,20 @@ class StashApp {
       // Server-side fetch + Readability via the save-page Edge Function.
       // A browser can't fetch arbitrary sites directly (CORS), so extraction
       // happens server-side, same path the extension uses for paywalled pages.
+      // Auth: send the signed-in user's JWT; the function derives user_id
+      // from it server-side (never trust a client-supplied user_id).
+      const { data: { session } } = await this.supabase.auth.getSession();
+      if (!session) throw new Error('You are signed out. Please sign in again.');
+
       const response = await fetch(`${CONFIG.SUPABASE_URL}/functions/v1/save-page`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'apikey': CONFIG.SUPABASE_ANON_KEY,
-          'Authorization': `Bearer ${CONFIG.SUPABASE_ANON_KEY}`,
+          'Authorization': `Bearer ${session.access_token}`,
         },
         body: JSON.stringify({
           url,
-          user_id: CONFIG.USER_ID,
           source: 'web',
         }),
       });
@@ -1775,18 +1802,43 @@ class StashApp {
     return div.innerHTML;
   }
 
+  // For interpolation inside HTML attribute values. escapeHtml (via
+  // textContent/innerHTML) does NOT escape quotes, so it's unsafe in
+  // attributes — a stored `" onerror=...` in image_url would execute.
+  escapeAttr(text) {
+    if (!text) return '';
+    return String(text)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  // Only allow http(s) URLs in href/src built from saved data; blocks
+  // javascript: and data: URLs that a malicious page could plant.
+  safeUrl(url) {
+    if (!url) return '#';
+    try {
+      const u = new URL(url, window.location.href);
+      if (u.protocol === 'http:' || u.protocol === 'https:') return url;
+    } catch (_) {}
+    return '#';
+  }
+
   renderMarkdown(text) {
     if (!text) return '';
 
-    // Configure marked for safe rendering
-    if (typeof marked !== 'undefined') {
+    // Saved content originates from arbitrary web pages, so treat it as
+    // untrusted: marked output must be sanitized before hitting innerHTML.
+    if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
       marked.setOptions({
         breaks: true,  // Convert \n to <br>
         gfm: true,     // GitHub Flavored Markdown
       });
 
       try {
-        return marked.parse(text);
+        return DOMPurify.sanitize(marked.parse(text));
       } catch (e) {
         console.error('Markdown parse error:', e);
         // Fallback to escaped plain text
@@ -1794,7 +1846,7 @@ class StashApp {
       }
     }
 
-    // Fallback if marked isn't loaded
+    // Fallback if marked or DOMPurify isn't loaded: escaped plain text only.
     return `<div style="white-space: pre-wrap;">${this.escapeHtml(text)}</div>`;
   }
 

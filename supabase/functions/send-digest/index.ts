@@ -3,9 +3,30 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, content-type",
+  "Access-Control-Allow-Headers": "authorization, content-type, x-cron-secret",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
+
+// Escape untrusted values (titles, highlights, URLs come from arbitrary
+// saved web pages) before interpolating into email HTML.
+function escapeHtml(text: string | null | undefined): string {
+  return String(text ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+// Only allow http(s) URLs in email links
+function safeUrl(url: string | null | undefined): string {
+  if (!url) return "#";
+  try {
+    const u = new URL(url);
+    if (u.protocol === "http:" || u.protocol === "https:") return url;
+  } catch { /* fall through */ }
+  return "#";
+}
 
 // Generate a simple summary from content (first 2 sentences)
 function generateSummary(content: string | null, excerpt: string | null): string {
@@ -50,9 +71,9 @@ function buildEmailHtml(saves: any[], highlights: any[], weekStart: string, week
       const summary = generateSummary(save.content, save.excerpt);
       html += `
           <div style="margin-bottom: 20px; padding-bottom: 20px; border-bottom: 1px solid #e5e7eb;">
-            <a href="${save.url}" style="color: #6366f1; text-decoration: none; font-weight: 600; font-size: 16px;">${save.title || "Untitled"}</a>
-            <p style="color: #6b7280; font-size: 12px; margin: 4px 0 8px;">${save.site_name || new URL(save.url).hostname} • ${formatDate(save.created_at)}</p>
-            ${summary ? `<p style="color: #374151; font-size: 14px; margin: 0; line-height: 1.5;">${summary.substring(0, 200)}${summary.length > 200 ? "..." : ""}</p>` : ""}
+            <a href="${escapeHtml(safeUrl(save.url))}" style="color: #6366f1; text-decoration: none; font-weight: 600; font-size: 16px;">${escapeHtml(save.title || "Untitled")}</a>
+            <p style="color: #6b7280; font-size: 12px; margin: 4px 0 8px;">${escapeHtml(save.site_name || new URL(save.url).hostname)} • ${formatDate(save.created_at)}</p>
+            ${summary ? `<p style="color: #374151; font-size: 14px; margin: 0; line-height: 1.5;">${escapeHtml(summary.substring(0, 200))}${summary.length > 200 ? "..." : ""}</p>` : ""}
           </div>
       `;
     }
@@ -71,8 +92,8 @@ function buildEmailHtml(saves: any[], highlights: any[], weekStart: string, week
     for (const highlight of highlights) {
       html += `
           <div style="margin-bottom: 16px; padding: 16px; background: #fef3c7; border-radius: 8px; border-left: 4px solid #f59e0b;">
-            <p style="color: #92400e; font-size: 14px; margin: 0; line-height: 1.6; font-style: italic;">"${highlight.highlight}"</p>
-            <p style="color: #b45309; font-size: 12px; margin: 8px 0 0; font-weight: 500;">— ${highlight.title || "Unknown Source"}</p>
+            <p style="color: #92400e; font-size: 14px; margin: 0; line-height: 1.6; font-style: italic;">"${escapeHtml(highlight.highlight)}"</p>
+            <p style="color: #b45309; font-size: 12px; margin: 8px 0 0; font-weight: 500;">— ${escapeHtml(highlight.title || "Unknown Source")}</p>
           </div>
       `;
     }
@@ -129,6 +150,18 @@ serve(async (req) => {
   }
 
   try {
+    // Only the scheduler (or you, manually) may trigger digests. Without
+    // this check anyone on the internet could spam digest emails or pass a
+    // user_id to force-send. Set CRON_SECRET as a function secret and send
+    // it in the X-Cron-Secret header from the cron job.
+    const cronSecret = Deno.env.get("CRON_SECRET");
+    if (!cronSecret || req.headers.get("x-cron-secret") !== cronSecret) {
+      return new Response(
+        JSON.stringify({ error: "Unauthorized" }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY");
     if (!RESEND_API_KEY) {
       throw new Error("RESEND_API_KEY not configured");

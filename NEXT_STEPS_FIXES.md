@@ -1,5 +1,13 @@
 # Next Steps: Security Fixes
 
+> **Status 2026-07-09:** Implemented in code. See `DEPLOYMENT_CHECKLIST.md`
+> for the remaining dashboard/deploy steps and verification. This doc is
+> kept for historical context. Note one correction: the edge functions did
+> NOT rely on a user JWT as assumed below — they trusted a client-supplied
+> `user_id` while writing with the service-role key, which was itself a
+> critical hole (fixed: user_id is now derived server-side from a verified
+> JWT, or a secret token for the bookmarklet).
+
 ## Context
 
 Supabase flagged `rls_disabled_in_public` on all 5 public tables (`saves`, `folders`, `tags`, `save_tags`, `user_preferences`). On 2026-05-24 we rolled back RLS to restore working state, so the warning is still open. This doc captures the proper fix for when there's time.

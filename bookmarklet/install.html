@@ -131,8 +131,8 @@
 
     <div id="setup-section">
       <form class="setup-form" id="setup-form">
-        <input type="text" id="user-id" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" required pattern="[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}">
-        <p class="input-help">Your user ID from Supabase (Authentication > Users)</p>
+        <input type="password" id="stash-token" placeholder="Bookmarklet secret token" required minlength="32">
+        <p class="input-help">Your STASH_BOOKMARKLET_TOKEN (Edge Function secret). Generate with: openssl rand -hex 32</p>
         <button type="submit" class="btn">Generate Bookmarklet</button>
       </form>
     </div>
@@ -167,11 +167,13 @@
 
     document.getElementById('setup-form').addEventListener('submit', (e) => {
       e.preventDefault();
-      const userId = document.getElementById('user-id').value.trim();
+      const stashToken = document.getElementById('stash-token').value.trim();
       const functionUrl = CONFIG.SUPABASE_URL + '/functions/v1/save-page';
 
-      // Generate Save to Stash bookmarklet
-      const bookmarkletCode = `javascript:(async()=>{const f='${functionUrl}',uid='${userId}';const sel=window.getSelection().toString().trim();const t=document.createElement('div');t.textContent='Saving...';t.style.cssText='position:fixed;bottom:20px;right:20px;padding:12px 24px;background:%236366f1;color:white;border-radius:8px;font:500 14px system-ui;z-index:999999';document.body.appendChild(t);function getPs(){const ps=[];document.querySelectorAll('article p,main p,.article-body p,.post-content p,.entry-content p,[role=article] p').forEach(p=>{const x=p.innerText?.trim();if(x&&x.length>20)ps.push(x)});if(ps.length<3)document.querySelectorAll('p').forEach(p=>{const x=p.innerText?.trim();if(x&&x.length>50)ps.push(x)});return ps.join('\\n\\n')}function getMeta(n){const e=document.querySelector('meta[name="'+n+'"],meta[property="'+n+'"],meta[property="og:'+n+'"]');return e?.content||null}const url=location.href;const pf=sel?null:{title:document.querySelector('h1')?.innerText?.trim()||document.title,content:getPs(),excerpt:getMeta('description')||'',image_url:getMeta('og:image'),site_name:getMeta('og:site_name')||(new URL(url).hostname.replace('www.','')),author:getMeta('author')||document.querySelector('[rel=author],.author,.byline')?.innerText?.trim()||null};const res=await fetch(f,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:url,user_id:uid,highlight:sel||null,source:'bookmarklet',prefetched:pf})});if(res.ok){t.textContent=sel?'Highlight saved!':'Page saved!';t.style.background='%2310b981'}else{t.textContent='Save failed';t.style.background='%23ef4444'}setTimeout(()=>t.remove(),2000)})();`;
+      // Generate Save to Stash bookmarklet.
+      // Auth: X-Stash-Token secret checked server-side; user_id is derived
+      // by the Edge Function, never sent from the page.
+      const bookmarkletCode = `javascript:(async()=>{const f='${functionUrl}',tk='${stashToken}';const sel=window.getSelection().toString().trim();const t=document.createElement('div');t.textContent='Saving...';t.style.cssText='position:fixed;bottom:20px;right:20px;padding:12px 24px;background:%236366f1;color:white;border-radius:8px;font:500 14px system-ui;z-index:999999';document.body.appendChild(t);function getPs(){const ps=[];document.querySelectorAll('article p,main p,.article-body p,.post-content p,.entry-content p,[role=article] p').forEach(p=>{const x=p.innerText?.trim();if(x&&x.length>20)ps.push(x)});if(ps.length<3)document.querySelectorAll('p').forEach(p=>{const x=p.innerText?.trim();if(x&&x.length>50)ps.push(x)});return ps.join('\\n\\n')}function getMeta(n){const e=document.querySelector('meta[name="'+n+'"],meta[property="'+n+'"],meta[property="og:'+n+'"]');return e?.content||null}const url=location.href;const pf=sel?null:{title:document.querySelector('h1')?.innerText?.trim()||document.title,content:getPs(),excerpt:getMeta('description')||'',image_url:getMeta('og:image'),site_name:getMeta('og:site_name')||(new URL(url).hostname.replace('www.','')),author:getMeta('author')||document.querySelector('[rel=author],.author,.byline')?.innerText?.trim()||null};const res=await fetch(f,{method:'POST',headers:{'Content-Type':'application/json','X-Stash-Token':tk},body:JSON.stringify({url:url,highlight:sel||null,source:'bookmarklet',prefetched:pf})});if(res.ok){t.textContent=sel?'Highlight saved!':'Page saved!';t.style.background='%2310b981'}else{t.textContent='Save failed';t.style.background='%23ef4444'}setTimeout(()=>t.remove(),2000)})();`;
 
       document.getElementById('bookmarklet-link').href = bookmarkletCode;
       document.getElementById('setup-section').style.display = 'none';

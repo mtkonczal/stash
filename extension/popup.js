@@ -11,9 +11,15 @@ document.addEventListener('DOMContentLoaded', async () => {
   const savesList = document.getElementById('saves-list');
   const openAppLink = document.getElementById('open-app-link');
 
-  // Single-user mode - skip auth, go straight to main view
-  showMainView();
-  loadRecentSaves();
+  // Require a signed-in session; RLS makes unauthenticated queries useless
+  // and saves would silently fail without one.
+  const { user } = await chrome.runtime.sendMessage({ action: 'getUser' });
+  if (user) {
+    showMainView();
+    loadRecentSaves();
+  } else {
+    showAuthView();
+  }
 
   function showAuthView() {
     authView.classList.remove('hidden');
@@ -129,23 +135,23 @@ document.addEventListener('DOMContentLoaded', async () => {
       const date = new Date(save.created_at).toLocaleDateString();
 
       return `
-        <div class="save-item" data-url="${save.url}">
+        <div class="save-item" data-url="${escapeAttr(save.url || '')}">
           <div class="icon ${isHighlight ? 'highlight' : ''}">
             ${isHighlight ? '✨' : '📄'}
           </div>
           <div class="content">
             <div class="title">${escapeHtml(title)}</div>
-            <div class="meta">${save.site_name || ''} · ${date}</div>
+            <div class="meta">${escapeHtml(save.site_name || '')} · ${date}</div>
           </div>
         </div>
       `;
     }).join('');
 
-    // Add click handlers
+    // Add click handlers (only open http/https URLs)
     savesList.querySelectorAll('.save-item').forEach(item => {
       item.addEventListener('click', () => {
         const url = item.dataset.url;
-        if (url) chrome.tabs.create({ url });
+        if (url && /^https?:\/\//i.test(url)) chrome.tabs.create({ url });
       });
     });
   }
@@ -156,11 +162,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     chrome.tabs.create({ url: CONFIG.WEB_APP_URL });
   });
 
-  // Helper
+  // Helpers
   function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+  }
+
+  // textContent/innerHTML doesn't escape quotes, so it's unsafe inside
+  // attribute values — escape those explicitly.
+  function escapeAttr(text) {
+    return String(text)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 
 });

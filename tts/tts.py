@@ -49,15 +49,39 @@ def _load_dotenv():
 
 _load_dotenv()
 
-# Configuration - prefer env vars so you can use service role for Storage writes
+# Configuration. The daemon is a trusted server-side job: it MUST use the
+# service-role key (RLS blocks the anon/publishable key), and it must come
+# from the environment (tts/.env, gitignored) — never hardcoded here.
+# Fail loudly at startup rather than silently running with a key that can't
+# write (that failure mode wedged pre-RLS setups into "security by obscurity").
 SUPABASE_URL = os.getenv("STASH_SUPABASE_URL", "https://fvydjrhqaeemkdakqnfk.supabase.co")
-SUPABASE_KEY = os.getenv(
-    "STASH_SUPABASE_SERVICE_ROLE_KEY",
-    os.getenv("STASH_SUPABASE_KEY", "sb_publishable_MkrRsrV7RAyYyTqkod_BxQ_4FdBY28I"),
-)
-USER_ID = os.getenv("STASH_USER_ID", "ab4b8518-354a-4c5e-a826-0b0a5c48cb57")
+SUPABASE_KEY = os.getenv("STASH_SUPABASE_SERVICE_ROLE_KEY")
+USER_ID = os.getenv("STASH_USER_ID")
+
+if not SUPABASE_KEY:
+    print("FATAL: STASH_SUPABASE_SERVICE_ROLE_KEY is not set. "
+          "Copy tts/.env.example to tts/.env and fill it in.")
+    sys.exit(1)
+if SUPABASE_KEY.startswith("sb_publishable_"):
+    print("FATAL: STASH_SUPABASE_SERVICE_ROLE_KEY looks like the anon/publishable "
+          "key. Use the service_role key (Dashboard > Settings > API).")
+    sys.exit(1)
+if not USER_ID:
+    print("FATAL: STASH_USER_ID is not set (service role bypasses RLS, so the "
+          "daemon must be told explicitly whose saves to process).")
+    sys.exit(1)
 CHECK_INTERVAL = 3600  # seconds between checks (hourly; backlog drains 5/cycle)
 LOG_FILE = Path(__file__).parent / "tts.log"
+
+# A 4500-word article generates in ~70s, so 180s is generous headroom. The
+# remote Edge TTS websocket occasionally stalls mid-stream; without a hard
+# timeout a single stall blocks the daemon's main loop forever (this froze
+# the daemon for 8 days on 2026-06-17). wait_for turns a stall into a
+# retryable TimeoutError instead.
+TTS_TIMEOUT = 180   # seconds per attempt
+TTS_RETRIES = 3
+HTTP_TIMEOUT = 30   # seconds for REST calls
+UPLOAD_TIMEOUT = 120  # seconds for Storage upload (files can be ~10 MB)
 
 # TTS Settings
 VOICE = "en-US-AriaNeural"  # Options: en-US-AriaNeural, en-US-GuyNeural, en-GB-SoniaNeural
@@ -95,7 +119,7 @@ def get_pending_saves():
         "limit": "50"  # Per-cycle cap; high enough to drain a backlog, harmless once caught up
     }
 
-    response = requests.get(url, headers=get_headers(), params=params)
+    response = requests.get(url, headers=get_headers(), params=params, timeout=HTTP_TIMEOUT)
 
     if response.status_code != 200:
         log(f"Error fetching saves: {response.text}")
@@ -163,11 +187,29 @@ def extract_text_for_tts(save):
 
     return full_text
 
-async def generate_audio(text, output_path):
-    """Generate audio using Edge TTS."""
+async def _generate_once(text, output_path):
     communicate = edge_tts.Communicate(text, VOICE, rate=RATE, volume=VOLUME)
     await communicate.save(output_path)
-    return output_path
+
+async def generate_audio(text, output_path):
+    """Generate audio using Edge TTS, with a hard per-attempt timeout + retries.
+
+    asyncio.wait_for cancels and raises TimeoutError if the remote websocket
+    stalls, so one bad article can no longer wedge the whole daemon. Transient
+    failures (stalls, resets) are retried; a persistent failure re-raises and
+    is caught by process_save, which logs it and moves to the next save.
+    """
+    last_err = None
+    for attempt in range(1, TTS_RETRIES + 1):
+        try:
+            await asyncio.wait_for(_generate_once(text, output_path), timeout=TTS_TIMEOUT)
+            return output_path
+        except Exception as e:
+            last_err = e
+            log(f"  TTS attempt {attempt}/{TTS_RETRIES} failed: {type(e).__name__}: {e}")
+            if attempt < TTS_RETRIES:
+                await asyncio.sleep(3)
+    raise last_err
 
 def upload_to_supabase_storage(file_path, save_id):
     """Upload audio file to Supabase Storage."""
@@ -187,7 +229,7 @@ def upload_to_supabase_storage(file_path, save_id):
         "x-upsert": "true"  # Overwrite if exists
     }
 
-    response = requests.post(url, headers=headers, data=file_data)
+    response = requests.post(url, headers=headers, data=file_data, timeout=UPLOAD_TIMEOUT)
 
     if response.status_code not in [200, 201]:
         raise Exception(f"Storage upload failed: {response.status_code} - {response.text}")
@@ -202,7 +244,7 @@ def update_save_audio_url(save_id, audio_url):
     headers = get_headers()
     headers["Prefer"] = "return=representation"
 
-    response = requests.patch(url, headers=headers, json={"audio_url": audio_url})
+    response = requests.patch(url, headers=headers, json={"audio_url": audio_url}, timeout=HTTP_TIMEOUT)
 
     if response.status_code not in [200, 204]:
         raise Exception(f"Error updating save: {response.text}")
