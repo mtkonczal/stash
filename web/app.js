@@ -316,6 +316,9 @@ class StashApp {
   }
 
   showAuthScreen() {
+    // Clear the pre-paint optimistic flag set by the inline script in
+    // index.html, otherwise its CSS keeps the auth screen hidden.
+    document.documentElement.classList.remove('has-session');
     document.getElementById('auth-screen').classList.remove('hidden');
     document.getElementById('main-screen').classList.add('hidden');
     this.resetAuthForm();
@@ -335,6 +338,7 @@ class StashApp {
   }
 
   showMainScreen() {
+    document.documentElement.classList.add('has-session');
     document.getElementById('auth-screen').classList.add('hidden');
     document.getElementById('main-screen').classList.remove('hidden');
   }

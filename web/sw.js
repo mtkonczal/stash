@@ -1,5 +1,12 @@
 // Stash Service Worker
-const CACHE_NAME = 'stash-v1';
+//
+// Strategy: stale-while-revalidate for all static assets (same-origin and
+// CDN). Serve from cache immediately so app launch never waits on the
+// network, then refresh the cache in the background so the next launch
+// picks up any deploy. Supabase API calls bypass the SW entirely.
+//
+// Bump CACHE_NAME on deploys that must take effect immediately.
+const CACHE_NAME = 'stash-v2';
 const ASSETS = [
   '/',
   '/index.html',
@@ -7,6 +14,9 @@ const ASSETS = [
   '/app.js',
   '/config.js',
   '/manifest.json',
+  'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2',
+  'https://cdn.jsdelivr.net/npm/marked/marked.min.js',
+  'https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js',
 ];
 
 // Install
@@ -31,7 +41,7 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
-// Fetch - Network first, fallback to cache
+// Fetch - stale-while-revalidate
 self.addEventListener('fetch', (event) => {
   // Skip non-GET requests
   if (event.request.method !== 'GET') return;
@@ -40,20 +50,23 @@ self.addEventListener('fetch', (event) => {
   if (event.request.url.includes('supabase.co')) return;
 
   event.respondWith(
-    fetch(event.request)
-      .then((response) => {
-        // Clone and cache successful responses
-        if (response.ok) {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => {
-            cache.put(event.request, clone);
-          });
-        }
-        return response;
-      })
-      .catch(() => {
-        // Fallback to cache
-        return caches.match(event.request);
-      })
+    caches.match(event.request).then((cached) => {
+      // Always kick off a background refresh
+      const network = fetch(event.request)
+        .then((response) => {
+          if (response.ok) {
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => {
+              cache.put(event.request, clone);
+            });
+          }
+          return response;
+        })
+        .catch(() => cached); // Offline: fall back to cache if we have it
+
+      // Cached copy wins the race; network result updates the cache for
+      // next time. First-ever request has no cache, so wait for network.
+      return cached || network;
+    })
   );
 });

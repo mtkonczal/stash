@@ -16,13 +16,39 @@
   <link rel="stylesheet" href="styles.css">
 
   <!-- Supabase -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <!-- Markdown parser -->
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <!-- HTML sanitizer: saved article content is untrusted, sanitize before render -->
-  <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
 </head>
 <body>
+  <!-- Pick the initial screen synchronously, before first paint, so a
+       returning user never sees the login form flash. supabase-js persists
+       the session in localStorage under sb-<project-ref>-auth-token; if that
+       key exists we show the main screen optimistically and let app.js
+       fall back to the auth screen only if the session is truly invalid. -->
+  <script>
+    (function () {
+      var hasSession = false;
+      try {
+        for (var i = 0; i < localStorage.length; i++) {
+          var k = localStorage.key(i);
+          if (k && k.indexOf('sb-') === 0 && k.indexOf('-auth-token') > 0) {
+            hasSession = true;
+            break;
+          }
+        }
+      } catch (e) { /* localStorage unavailable: leave login visible */ }
+      if (hasSession) document.documentElement.classList.add('has-session');
+    })();
+  </script>
+  <style>
+    /* Applied pre-paint by the inline script above. !important needed to
+       beat the .hidden utility class (also display !important). */
+    .has-session #auth-screen { display: none !important; }
+    .has-session #main-screen { display: flex !important; }
+  </style>
   <div id="app">
     <!-- Auth Screen -->
     <div id="auth-screen" class="screen">
@@ -463,9 +489,10 @@
     </div>
   </div>
 
-  <!-- Config -->
-  <script src="config.js"></script>
-  <script src="app.js"></script>
+  <!-- Config. defer keeps execution order after the deferred CDN scripts
+       above (deferred scripts run in document order after parsing). -->
+  <script defer src="config.js"></script>
+  <script defer src="app.js"></script>
 
   <!-- Register Service Worker -->
   <script>
