@@ -1,11 +1,19 @@
 // Stash Web App
+
+// Columns needed to render list cards. `content` is deliberately excluded:
+// it is by far the largest column and pulling it for every row is what made
+// list loads slow. It is lazy-loaded when a save is opened.
+const SAVE_LIST_COLUMNS =
+  'id, title, url, site_name, author, excerpt, highlight, image_url, audio_url, is_archived, is_favorite, created_at';
+
 class StashApp {
   constructor() {
     this.supabase = null;
     this.user = null; // Set from the authenticated Supabase session
     this.currentView = 'all';
     this.currentSave = null;
-    this.saves = [];
+    this.saves = []; // Rows for the current view (filtered from allSaves)
+    this.allSaves = null; // Full list (all views), fetched once per launch
     this.tags = [];
     this.folders = [];
     this.pendingKindleImport = null; // Stores parsed highlights before import
@@ -430,51 +438,126 @@ class StashApp {
     ]);
   }
 
+  // --- Saves data flow ---
+  // All views are filters over one table, so we fetch the list once per
+  // launch (without `content`), render views from memory (instant tab
+  // switches), snapshot it to localStorage (instant next launch), and
+  // reconcile with the network in the background.
+
+  savesCacheKey() {
+    return `stash-saves-${this.user?.id || 'anon'}`;
+  }
+
+  readSavesCache() {
+    try {
+      const raw = localStorage.getItem(this.savesCacheKey());
+      const parsed = raw ? JSON.parse(raw) : null;
+      return Array.isArray(parsed) ? parsed : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  writeSavesCache() {
+    try {
+      localStorage.setItem(this.savesCacheKey(), JSON.stringify(this.allSaves));
+    } catch (e) {
+      // Quota exceeded or storage unavailable: the cache is an optimization
+      // only, so drop it rather than fail.
+      try { localStorage.removeItem(this.savesCacheKey()); } catch (_) {}
+    }
+  }
+
+  // Apply an optimistic local mutation to the master list + cache.
+  // patch === null removes the row.
+  patchLocalSave(id, patch) {
+    if (!this.allSaves) return;
+    this.allSaves = patch === null
+      ? this.allSaves.filter(s => s.id !== id)
+      : this.allSaves.map(s => (s.id === id ? { ...s, ...patch } : s));
+    this.writeSavesCache();
+  }
+
   async loadSaves() {
-    const container = document.getElementById('saves-container');
-    const loading = document.getElementById('loading');
-    const empty = document.getElementById('empty-state');
-
-    loading.classList.remove('hidden');
-    container.innerHTML = '';
-
-    const sortValue = document.getElementById('sort-select').value;
-    const [column, direction] = sortValue.split('.');
-
-    let query = this.supabase
-      .from('saves')
-      .select('*')
-      .order(column, { ascending: direction === 'asc' });
-
-    // Apply view filters
-    if (this.currentView === 'highlights') {
-      query = query.not('highlight', 'is', null);
-    } else if (this.currentView === 'articles') {
-      query = query.is('highlight', null);
-    } else if (this.currentView === 'archived') {
-      query = query.eq('is_archived', true);
-    } else if (this.currentView === 'weekly') {
-      // Weekly review - get this week's saves
-      const weekAgo = new Date();
-      weekAgo.setDate(weekAgo.getDate() - 7);
-      query = query.gte('created_at', weekAgo.toISOString());
-    } else {
-      query = query.eq('is_archived', false);
+    // Warm path: render immediately from memory or last session's snapshot,
+    // then refresh in the background.
+    if (!this.allSaves) {
+      this.allSaves = this.readSavesCache();
     }
 
-    const { data, error } = await query;
+    if (this.allSaves) {
+      this.applyView();
+      this.refreshSaves();
+      return;
+    }
 
+    // Cold start with no cache: show the spinner and wait for the network.
+    const loading = document.getElementById('loading');
+    loading.classList.remove('hidden');
+    document.getElementById('saves-container').innerHTML = '';
+    await this.refreshSaves();
     loading.classList.add('hidden');
+  }
+
+  async refreshSaves() {
+    const { data, error } = await this.supabase
+      .from('saves')
+      .select(SAVE_LIST_COLUMNS)
+      .order('created_at', { ascending: false });
 
     if (error) {
       console.error('Error loading saves:', error);
       return;
     }
 
-    this.saves = data || [];
+    const fresh = data || [];
+    // Skip the re-render (and scroll jump) when nothing actually changed.
+    const changed = JSON.stringify(fresh) !== JSON.stringify(this.allSaves);
+    this.allSaves = fresh;
+    this.writeSavesCache();
+    if (changed) this.applyView();
+  }
+
+  // Filter + sort the master list for the current view and render.
+  // Purely local: this is what makes tab switches instant.
+  applyView() {
+    if (!this.allSaves) return;
+
+    const container = document.getElementById('saves-container');
+    const empty = document.getElementById('empty-state');
+
+    // Same filters the per-view server queries used to apply. Note that,
+    // as before, highlights/articles/weekly intentionally include archived
+    // items; only 'all' excludes them.
+    let rows = this.allSaves;
+    if (this.currentView === 'highlights') {
+      rows = rows.filter(s => s.highlight != null);
+    } else if (this.currentView === 'articles') {
+      rows = rows.filter(s => s.highlight == null);
+    } else if (this.currentView === 'archived') {
+      rows = rows.filter(s => s.is_archived);
+    } else if (this.currentView === 'weekly') {
+      const weekAgo = new Date();
+      weekAgo.setDate(weekAgo.getDate() - 7);
+      const cutoff = weekAgo.toISOString();
+      rows = rows.filter(s => s.created_at >= cutoff);
+    } else {
+      rows = rows.filter(s => !s.is_archived);
+    }
+
+    // In-memory sort. created_at is an ISO string so lexicographic order is
+    // chronological; titles sort case-insensitively.
+    const [column, direction] = document.getElementById('sort-select').value.split('.');
+    const asc = direction === 'asc' ? 1 : -1;
+    rows = [...rows].sort((a, b) =>
+      asc * String(a[column] ?? '').localeCompare(String(b[column] ?? ''), undefined, { sensitivity: 'base' })
+    );
+
+    this.saves = rows;
 
     if (this.saves.length === 0) {
       empty.classList.remove('hidden');
+      container.innerHTML = '';
     } else {
       empty.classList.add('hidden');
       // Use special rendering for weekly view
@@ -542,10 +625,28 @@ class StashApp {
     // Calculate stats
     const articles = this.saves.filter(s => !s.highlight);
     const highlights = this.saves.filter(s => s.highlight);
-    const totalWords = articles.reduce((sum, s) => {
-      const words = (s.content || '').split(/\s+/).length;
-      return sum + words;
+
+    // List rows no longer include `content`, so fetch it for this week's
+    // articles (a small set) and patch the word-count stat when it arrives.
+    const countWords = () => articles.reduce((sum, s) => {
+      return sum + (s.content ? s.content.split(/\s+/).length : 0);
     }, 0);
+    const totalWords = countWords();
+    const missingIds = articles.filter(a => a.content === undefined).map(a => a.id);
+    if (missingIds.length > 0) {
+      this.supabase
+        .from('saves')
+        .select('id, content')
+        .in('id', missingIds)
+        .then(({ data }) => {
+          (data || []).forEach(row => {
+            const a = articles.find(x => x.id === row.id);
+            if (a) a.content = row.content; // also caches for openReadingPane
+          });
+          const el = document.getElementById('weekly-words-stat');
+          if (el) el.textContent = `${Math.round(countWords() / 1000)}k`;
+        });
+    }
 
     // Get unique sites
     const sites = [...new Set(this.saves.map(s => s.site_name).filter(Boolean))];
@@ -554,7 +655,7 @@ class StashApp {
     let rediscovery = null;
     const allSavesQuery = this.supabase
       .from('saves')
-      .select('*')
+      .select(SAVE_LIST_COLUMNS) // content lazy-loads if the card is opened
       .lt('created_at', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
       .limit(50);
 
@@ -586,7 +687,7 @@ class StashApp {
             <span class="weekly-stat-label">highlights</span>
           </div>
           <div class="weekly-stat">
-            <span class="weekly-stat-value">${Math.round(totalWords / 1000)}k</span>
+            <span class="weekly-stat-value" id="weekly-words-stat">${Math.round(totalWords / 1000)}k</span>
             <span class="weekly-stat-label">words</span>
           </div>
         </div>
@@ -825,6 +926,7 @@ class StashApp {
 
     // Optimistic remove from local list
     this.saves = this.saves.filter(s => s.id !== id);
+    this.patchLocalSave(id, { is_archived: newValue });
     this.renderForCurrentView();
 
     const { error } = await this.supabase
@@ -834,7 +936,7 @@ class StashApp {
 
     if (error) {
       console.error('Archive failed:', error);
-      this.loadSaves();
+      await this.refreshSaves(); // revert optimistic update from server truth
       return;
     }
 
@@ -844,7 +946,8 @@ class StashApp {
         .from('saves')
         .update({ is_archived: !newValue })
         .eq('id', id);
-      this.loadSaves();
+      this.patchLocalSave(id, { is_archived: !newValue });
+      this.applyView();
     });
   }
 
@@ -854,6 +957,7 @@ class StashApp {
 
     // Optimistic remove
     this.saves = this.saves.filter(s => s.id !== id);
+    this.patchLocalSave(id, null);
     this.renderForCurrentView();
 
     // Defer the actual DB delete so undo can cancel it
@@ -870,7 +974,8 @@ class StashApp {
     this.showSwipeToast('Deleted', () => {
       cancelled = true;
       clearTimeout(timeoutId);
-      this.loadSaves();
+      // Row still exists in the DB; restore it from the server
+      this.refreshSaves();
     }, 5000);
   }
 
@@ -1002,7 +1107,7 @@ class StashApp {
     this.renderSaves();
   }
 
-  openReadingPane(save) {
+  async openReadingPane(save) {
     this.currentSave = save;
     const pane = document.getElementById('reading-pane');
 
@@ -1013,6 +1118,27 @@ class StashApp {
     document.getElementById('reading-meta').innerHTML = `
       ${save.site_name || ''} ${save.author ? `· ${save.author}` : ''} · ${new Date(save.created_at).toLocaleDateString()}
     `;
+
+    // Show the pane immediately; content may still be loading below.
+    pane.classList.remove('hidden');
+    // Add open class for mobile slide-in animation
+    requestAnimationFrame(() => {
+      pane.classList.add('open');
+    });
+
+    // Lazy-load content: list queries no longer pull the (large) content
+    // column, so fetch it on first open and cache it on the save object.
+    if (!save.highlight && save.content === undefined) {
+      document.getElementById('reading-body').innerHTML = '<p class="reading-loading">Loading…</p>';
+      const { data, error } = await this.supabase
+        .from('saves')
+        .select('content')
+        .eq('id', save.id)
+        .single();
+      // User may have closed the pane or opened another save meanwhile
+      if (this.currentSave?.id !== save.id) return;
+      if (!error) save.content = data?.content ?? null;
+    }
 
     // Handle audio player visibility
     const audioPlayer = document.getElementById('audio-player');
@@ -1050,12 +1176,6 @@ class StashApp {
     // Update button states
     document.getElementById('archive-btn').classList.toggle('active', save.is_archived);
     document.getElementById('favorite-btn').classList.toggle('active', save.is_favorite);
-
-    pane.classList.remove('hidden');
-    // Add open class for mobile slide-in animation
-    requestAnimationFrame(() => {
-      pane.classList.add('open');
-    });
   }
 
   closeReadingPane() {
@@ -1206,7 +1326,8 @@ class StashApp {
       .eq('id', this.currentSave.id);
 
     this.currentSave.is_archived = newValue;
-    this.loadSaves();
+    this.patchLocalSave(this.currentSave.id, { is_archived: newValue });
+    this.applyView();
     if (newValue) this.closeReadingPane();
   }
 
@@ -1220,6 +1341,7 @@ class StashApp {
       .eq('id', this.currentSave.id);
 
     this.currentSave.is_favorite = newValue;
+    this.patchLocalSave(this.currentSave.id, { is_favorite: newValue });
     document.getElementById('favorite-btn').classList.toggle('active', newValue);
   }
 
@@ -1233,8 +1355,9 @@ class StashApp {
       .delete()
       .eq('id', this.currentSave.id);
 
+    this.patchLocalSave(this.currentSave.id, null);
     this.closeReadingPane();
-    this.loadSaves();
+    this.applyView();
   }
 
   async addTagToSave() {
@@ -1626,7 +1749,7 @@ class StashApp {
       }
 
       this.setAddLinkStatus('Saved! Audio will generate shortly.', 'success');
-      await this.loadSaves();
+      await this.refreshSaves(); // new row must come from the server
       setTimeout(() => this.hideAddLinkModal(), 700);
     } catch (err) {
       console.error('Add link failed:', err);
@@ -1816,7 +1939,7 @@ class StashApp {
 
       // Success - close modal and refresh
       this.hideKindleImportModal();
-      this.loadSaves();
+      this.refreshSaves(); // imported rows must come from the server
 
       alert(`Successfully imported ${saves.length} highlights!`);
 
