@@ -37,15 +37,31 @@ class StashApp {
 
     this.bindEvents();
 
+    // Optimistic start: getSession() blocks on a network token refresh
+    // whenever the access token has expired (1h default), i.e. on nearly
+    // every launch. Read the persisted session synchronously instead and
+    // render the cached saves list right away; the refresh happens in the
+    // background and every query waits on it internally.
+    const stored = this.readStoredSession();
+    if (stored?.user) {
+      this.user = stored.user;
+      this.showMainScreen();
+      this.loadData();
+    }
+
     // Require a real session: RLS policies key off auth.uid(), so nothing
     // works without one. The supabase-js client persists the session in
     // localStorage, so this is a one-time login per browser.
     const { data: { session } } = await this.supabase.auth.getSession();
     if (session) {
+      const wasSignedOut = !this.user;
       this.user = session.user;
-      this.showMainScreen();
-      this.loadData();
+      if (wasSignedOut) {
+        this.showMainScreen();
+        this.loadData();
+      }
     } else {
+      this.user = null;
       this.showAuthScreen();
     }
 
@@ -63,6 +79,18 @@ class StashApp {
         this.showAuthScreen();
       }
     });
+  }
+
+  // The session supabase-js persisted last time, read without touching the
+  // network. Key format matches supabase-js's default storageKey.
+  readStoredSession() {
+    try {
+      const ref = new URL(CONFIG.SUPABASE_URL).hostname.split('.')[0];
+      const raw = localStorage.getItem(`sb-${ref}-auth-token`);
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) {
+      return null;
+    }
   }
 
   // Theme Management
