@@ -6,7 +6,7 @@
 // picks up any deploy. Supabase API calls bypass the SW entirely.
 //
 // Bump CACHE_NAME on deploys that must take effect immediately.
-const CACHE_NAME = 'stash-v3';
+const CACHE_NAME = 'stash-v4';
 const ASSETS = [
   '/',
   '/index.html',

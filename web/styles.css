@@ -125,6 +125,16 @@ input, select {
   font-size: inherit;
 }
 
+/* iOS Safari zooms the page when focusing a field under 16px and never
+   zooms back out (seen after pasting into Add Link). 16px on touch devices
+   prevents it without disabling pinch-zoom. !important beats the per-form
+   rules below, which set 14-15px. */
+@media (hover: none) and (pointer: coarse) {
+  input, select, textarea {
+    font-size: 16px !important;
+  }
+}
+
 .hidden {
   display: none !important;
 }
