@@ -29,7 +29,7 @@ const root = path.resolve(__dirname, '..');
     page.on('pageerror', error => failures.push(error.message));
     await page.route('https://**/*', route => route.fulfill({ body: '', contentType: 'application/javascript' }));
     await page.addInitScript(() => {
-      window.fixture = { url: null, job: null, seen: null, error: null };
+      window.fixture = { url: null, job: null, seen: null, error: null, expiresAt:null };
       window.marked = { setOptions() {}, parse: text => '<p>' + text + '</p>' };
       window.DOMPurify = { sanitize: text => text };
       const client = {
@@ -45,7 +45,7 @@ const root = path.resolve(__dirname, '..');
           const q = { fields:'', select(fields) { this.fields=fields; return this; }, eq() { return this; },
             abortSignal() { return this; }, order() { return this; },
             result() {
-              if (table === 'saves') return { data: { audio_url: window.fixture.url, content: 'An article. '.repeat(30) }, error: window.fixture.error };
+              if (table === 'saves') return { data: { audio_url: window.fixture.url, audio_expires_at:window.fixture.expiresAt, content: 'An article. '.repeat(30) }, error: window.fixture.error };
               if (table === 'audio_jobs') return { data: window.fixture.job, error: window.fixture.error };
               if (table === 'audio_workers') return { data: window.fixture.seen ? { last_seen: window.fixture.seen } : null, error: window.fixture.error };
               return { data: [], error: null };
@@ -92,13 +92,24 @@ const root = path.resolve(__dirname, '..');
     await page.getByText('Audio queued', { exact:true }).waitFor();
     await page.evaluate(async () => {
       fixture.url = 'storage://stash-audio/fixture-user/recording.mp3';
+      fixture.expiresAt='2027-01-18T12:00:00Z';
       await app.audioWorkflow.refresh(app.audioWorkflow.epoch);
     });
     await page.locator('#audio-player').waitFor({ state:'visible' });
+    assert.match(await page.locator('#audio-expiry').innerText(),/2027/);
     await page.locator('#audio-play-btn').click();
     await page.waitForFunction(() => app.isPlaying && app.audio.currentTime > 0);
     await page.locator('#audio-speed').selectOption('1.5');
     assert.equal(await page.evaluate(() => app.audio.playbackRate),1.5);
+    await page.evaluate(async () => {
+      fixture.url=null;
+      fixture.job={ status:'expired' };
+      await app.audioWorkflow.refresh(app.audioWorkflow.epoch);
+    });
+    await page.getByRole('button',{ name:'Regenerate audio',exact:true }).waitFor();
+    assert.equal(await page.locator('#audio-player').isVisible(),false);
+    await page.getByRole('button',{ name:'Regenerate audio',exact:true }).click();
+    await page.getByText('Audio queued',{ exact:true }).waitFor();
     await page.evaluate(() => app.closeReadingPane());
     assert.equal(await page.evaluate(() => app.audioWorkflow.save),null);
     await page.evaluate(async () => {
@@ -109,7 +120,7 @@ const root = path.resolve(__dirname, '..');
     await page.getByText('Audio setup isn’t available yet', { exact:true }).waitFor();
     await page.evaluate(() => app.closeReadingPane());
     assert.deepEqual(failures,[]);
-    console.log('Chromium: Generate, keyboard, waiting, progress, failed/retry, private playback, speed, close, setup error, narrow viewport, dark theme, reduced motion passed');
+    console.log('Chromium: Generate, keyboard, waiting, progress, failed/retry, private playback, speed, expired/regenerate, close, setup error, narrow viewport, dark theme, reduced motion passed');
   } finally {
     if (browser) await browser.close();
     await new Promise(resolve => server.close(resolve));

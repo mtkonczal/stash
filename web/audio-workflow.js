@@ -35,6 +35,7 @@ class StashAudioWorkflow {
     this.close();
     this.save = save;
     document.getElementById('audio-player').classList.add('hidden');
+    document.getElementById('audio-expiry').classList.add('hidden');
     if (!save.audio_url && (save.highlight || !save.content || save.content.trim().length < 100)) {
       document.getElementById('audio-status').classList.add('hidden');
       return;
@@ -72,7 +73,7 @@ class StashAudioWorkflow {
     try {
       // Fetch audio_url afresh even for cached saves. Never infer status from
       // a missing URL, and never fetch the article's large content to poll.
-      const result = await this.app.supabase.from('saves').select('audio_url')
+      const result = await this.app.supabase.from('saves').select('audio_url,audio_expires_at')
         .eq('id', save.id).abortSignal(controller.signal).single();
       if (epoch !== this.epoch) return;
       if (result.error) throw result.error;
@@ -94,8 +95,22 @@ class StashAudioWorkflow {
         }
         document.getElementById('audio-status').classList.add('hidden');
         document.getElementById('audio-player').classList.remove('hidden');
+        const expiry = document.getElementById('audio-expiry');
+        const expiresAt = result.data.audio_expires_at;
+        expiry.classList.toggle('hidden', !expiresAt);
+        expiry.textContent = expiresAt ? `Expires ${new Date(expiresAt).toLocaleDateString(undefined, {
+          year: 'numeric', month: 'short', day: 'numeric',
+        })}. You can regenerate it afterward.` : '';
         return;
       }
+      if (save.audio_url || this.loadedUrl) {
+        save.audio_url = null;
+        this.loadedUrl = null;
+        this.app.patchLocalSave(save.id, { audio_url: null });
+        this.app.stopAudio();
+      }
+      document.getElementById('audio-player').classList.add('hidden');
+      document.getElementById('audio-expiry').classList.add('hidden');
       const [jobs, workers] = await Promise.all([
         this.app.supabase.from('audio_jobs')
           .select('status,attempts,completed_chunks,total_chunks,last_error,lease_until,available_at')
@@ -110,6 +125,11 @@ class StashAudioWorkflow {
       if (!job) {
         terminal = true;
         this.render('Audio hasn’t been requested', { detail: 'Generate a full recording with Sky.', button: 'Generate audio' });
+      } else if (job.status === 'expired') {
+        terminal = true;
+        this.render('Audio expired after 3 months', {
+          detail: 'The article is still saved. Generate a fresh recording with Sky.', button: 'Regenerate audio',
+        });
       } else if (job.status === 'failed') {
         terminal = true;
         this.render('Audio generation failed', { detail: job.last_error || 'Retry to resume from saved sections.', button: 'Retry audio' });

@@ -320,6 +320,7 @@ def main():
     # Explicit select catches a missing migration, bad credentials, and bad user
     # configuration before declaring this worker healthy.
     api.call("/rest/v1/audio_jobs?select=id&limit=1", method="GET")
+    api.call("/rest/v1/audio_deletions?select=id&limit=1", method="GET")
     users = api.call(f"/auth/v1/admin/users/{api.user}", method="GET")
     if not users or users.get("id") != api.user:
         raise RuntimeError("STASH_USER_ID does not identify an existing user")
@@ -336,10 +337,21 @@ def main():
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise RuntimeError("Another Sky worker is already running") from None
+        next_cleanup = 0
         while not stop.is_set():
             job, token = None, str(uuid.uuid4())
             try:
                 api.heartbeat()
+                if time.monotonic() >= next_cleanup:
+                    from retention import cleanup_expired_audio
+                    try:
+                        cleanup_expired_audio(api)
+                        next_cleanup = time.monotonic() + 3600
+                    except Exception:
+                        # Cleanup failures must not block synthesis or lose
+                        # the durable deletion outbox. Retry in one minute.
+                        LOG.warning('Audio retention could not finish; will retry')
+                        next_cleanup = time.monotonic() + 60
                 jobs = api.rpc("claim_stash_audio", p_user_id=api.user, p_token=token)
                 if jobs:
                     job = jobs[0]

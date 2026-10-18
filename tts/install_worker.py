@@ -45,7 +45,7 @@ def main():
     env_path.write_text("".join(f'{k}="{values[k]}"\n' for k in (
         "STASH_SUPABASE_URL", "STASH_SUPABASE_SERVICE_ROLE_KEY", "STASH_USER_ID")))
     env_path.chmod(0o600)
-    for name in ("worker.py", "requirements-kokoro.lock"):
+    for name in ("worker.py", "retention.py", "requirements-kokoro.lock"):
         shutil.copy2(ROOT / name, target / name)
     (target / "models").mkdir(exist_ok=True)
     for name in ("kokoro-v1.0.onnx", "voices-v1.0.bin"):

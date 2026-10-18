@@ -65,7 +65,7 @@ a recovery button. Requests disable the button while pending.
 
 ### Buttons and actions
 Reuse `.btn.secondary`. Labels are Generate audio, Retry audio, Check again,
-and Load audio, each tied to the corresponding action. Preserve focus outlines.
+Regenerate audio, and Load audio, each tied to the corresponding action. Preserve focus outlines.
 
 ### Navigation and data display
 The reading pane owns audio status. Closing or changing the article cancels
@@ -85,7 +85,9 @@ it. Playback starts only after a user's Play action.
 
 ### Content and data visualization
 Plain English. Measured progress is sections completed, not an invented ETA.
-Waiting for a sleeping/offline Mac must be stated directly.
+Waiting for a sleeping/offline Mac must be stated directly. Future recordings
+show their expiry date. Expired recordings offer Regenerate audio; existing
+recordings have no expiry and remain available.
 
 ## Do's and Don'ts
 

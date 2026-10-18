@@ -2,13 +2,13 @@
 
 Scope: the Sky audio migration, preserving the existing reading application.
 Authority: the user's approved workflow in this chat, implemented by
-`supabase/migrations/202610180001_audio_jobs.sql` and `tts/worker.py`.
+the audio migrations under `supabase/migrations/` and `tts/worker.py`.
 
 ## Canonical UI Map
 
 | Capability | Canonical owner | Source of truth | Allowed variants | Verification |
 |---|---|---|---|---|
-| CRUD | `web/audio-workflow.js` | Queue RPCs and this contract | Generate / Retry | `tests/audio-workflow.test.cjs`, `tests/audio-queue.test.mjs` |
+| CRUD | `web/audio-workflow.js` | Queue RPCs and this contract | Generate / Retry / Regenerate | `tests/audio-workflow.test.cjs`, `tests/audio-queue.test.mjs` |
 | Select/Listbox | Existing `#audio-speed` native select | Existing playback controls | Native speed selection | Browser keyboard/popup check |
 | Form | Existing button actions in the reading pane | `web/index.html` | No new form | Browser keyboard check |
 | Scrollbar | `web/styles.css` | Existing application layout | Reading pane scroll | Browser narrow viewport check |
@@ -19,7 +19,7 @@ Authority: the user's approved workflow in this chat, implemented by
 - New full articles queue automatically after the migration. Existing articles
   are not backfilled automatically. Highlights and text under 100 characters
   are ineligible. Existing audio is never replaced by this migration.
-- Generate/Retry is authenticated, ownership checked, and idempotent. Users
+- Generate/Retry/Regenerate is authenticated, ownership checked, and idempotent. Users
   cannot directly edit job status or claim work through browser credentials.
 - State: queued → generating → ready; failures back off twice, then failed.
   Explicit Retry resets the retry budget and reuses completed local sections.
@@ -34,8 +34,15 @@ Authority: the user's approved workflow in this chat, implemented by
   failures offer Load audio without submitting a new synthesis job.
 - New MP3s are private in `stash-audio`, readable only by their owner via signed
   links. The legacy public `audio` bucket and URLs remain unchanged.
-- No automatic remote deletion. Cache deletion occurs only after confirmed
-  completion. The free-storage allowance must be measured before bulk backfill.
+- Existing recordings have no expiry. Future audio expires three calendar
+  months after generation; the Mac worker checks roughly hourly while awake.
+  Articles remain saved. Expired audio offers Regenerate audio, using current
+  article text and a fresh object UUID and three-month window. No local backups.
+- Future ready recordings show their expiry date. An expired cached playback
+  URL is cleared before presenting regeneration.
+- Storage API deletion uses a durable outbox and exact private object names.
+  Failed deletions retry; regenerations cannot reuse an expired object path.
+  Storage limits still apply to all retained recordings.
 
 ## Business-source traceability
 
@@ -43,6 +50,7 @@ Authority: the user's approved workflow in this chat, implemented by
 |---|---|---|
 | Free local Sky synthesis | User's explicit choice in this chat | No paid provider or billing UI |
 | Existing articles/audio preserved | Approved replacement plan | No bulk regeneration or deletion |
+| Existing recordings stay; future audio expires after three calendar months | User’s explicit retention choice | Expiry date and Regenerate audio |
 | Owner access only | Existing `supabase/schema.sql` RLS model | Authenticated Generate/Retry and private new audio |
 | New-article automatic queue | Approved workflow | Saving a new article requires no second action |
 | Local machine can sleep | Approved workflow | Explicit Waiting for your Mac state |

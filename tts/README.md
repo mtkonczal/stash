@@ -10,12 +10,13 @@ See [KOKORO.md](KOKORO.md) for model download and voice audition instructions.
 
 ## Install
 
-Apply `supabase/migrations/202610180001_audio_jobs.sql` once in the Supabase SQL
-editor, or with an authenticated, linked CLI:
+Apply the three migrations below once, in order, in the Supabase SQL editor
+or with an authenticated, linked CLI:
 
 ```sh
 supabase db query --linked --file supabase/migrations/202610180001_audio_jobs.sql
 supabase db query --linked --file supabase/migrations/202610180002_audio_storage_budget.sql
+supabase db query --linked --file supabase/migrations/202610180003_audio_retention.sql
 ```
 
 Provide `STASH_SUPABASE_URL`, `STASH_SUPABASE_SERVICE_ROLE_KEY`, and
@@ -86,10 +87,19 @@ The web client exchanges this reference for a one-hour signed playback link.
 The legacy public `audio` bucket is unchanged. The browser refreshes status
 while an article is open, cancels stale requests, and never autoplays.
 
-No automatic remote deletion or storage-plan upgrades. The worker checks
+Recordings that existed before the retention migration have no expiry and stay
+indefinitely. Future recordings expire three calendar months after successful
+generation. The worker checks on startup and roughly hourly while the Mac is
+awake; a sleeping Mac catches up when it wakes. Cleanup removes only the expired
+MP3, keeping the article and offering Regenerate audio. Regeneration uses current
+article text, a new object UUID, and a fresh three-month window. No local backup
+is made. A durable deletion outbox retries Storage API failures; a regenerated
+file cannot share the expired file’s object path.
+
+No automatic storage-plan upgrades. The worker checks
 storage size before each upload and refuses to exceed a 950 MB safety budget
-or the free service's 50 MB per-file upload limit. Existing files are not
-deleted to make room. Free generation does not remove storage/transfer quotas.
+or the free service's 50 MB per-file upload limit. Grandfathered files are not
+deleted to make room, so the retained legacy library still counts against this limit. Free generation does not remove storage/transfer quotas.
 
 ## Tests
 
@@ -98,6 +108,7 @@ tts/.venv-kokoro/bin/python -m unittest discover -s tts/tests -v
 node --test tests/audio-workflow.test.cjs
 # Install @electric-sql/pglite and playwright in a separate test environment:
 PGLITE_MODULE=/absolute/path/to/@electric-sql/pglite/dist/index.js node tests/audio-queue.test.mjs
+PGLITE_MODULE=/absolute/path/to/@electric-sql/pglite/dist/index.js node tests/audio-retention.test.mjs
 PLAYWRIGHT_MODULE=/absolute/path/to/playwright node tests/audio-browser.cjs
 ```
 

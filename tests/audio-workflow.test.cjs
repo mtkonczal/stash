@@ -2,7 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { StashAudioWorkflow } = require('../web/audio-workflow.js');
 
-function setup({ url = null, job = null, lastSeen = null, error = null, initAudio = async () => true } = {}) {
+function setup({ url = null, expiresAt = null, job = null, lastSeen = null, error = null, initAudio = async () => true } = {}) {
   const elements = new Map();
   function element(id) {
     if (!elements.has(id)) {
@@ -18,9 +18,9 @@ function setup({ url = null, job = null, lastSeen = null, error = null, initAudi
   global.window = { addEventListener() {} };
   Object.defineProperty(global, 'navigator', { value: { onLine: true }, configurable: true });
   let requests = 0;
-  const app = { user: { id: 'user' }, patchLocalSave() {}, initAudio, supabase: {
+  const app = { user: { id: 'user' }, patchLocalSave() {}, stopAudio() {}, initAudio, supabase: {
     from(table) {
-      const result = table === 'saves' ? { data: { audio_url: url }, error } :
+      const result = table === 'saves' ? { data: { audio_url: url, audio_expires_at: expiresAt }, error } :
         table === 'audio_jobs' ? { data: job, error } : { data: lastSeen ? { last_seen: lastSeen } : null, error };
       const query = { select() { return this; }, eq() { return this; }, abortSignal() { return this; },
         single: async () => result, maybeSingle: async () => result };
@@ -63,6 +63,18 @@ test('failed jobs expose a retry action', async () => {
   assert.equal(element('audio-status-detail').textContent, 'Upload failed');
   flow.close();
 });
+test('expired audio clears stale cached URLs and offers regeneration', async () => {
+  const { flow, element } = setup({ job: { status:'expired' } });
+  flow.save.audio_url='storage://stash-audio/user/old.mp3';
+  flow.loadedUrl=flow.save.audio_url;
+  await flow.refresh(flow.epoch);
+  assert.equal(flow.save.audio_url,null);
+  assert.equal(flow.loadedUrl,null);
+  assert.equal(element('audio-request-btn').textContent,'Regenerate audio');
+  assert.ok(element('audio-player').classList.contains('hidden'));
+  assert.match(element('audio-status-detail').textContent,/article is still saved/);
+  flow.close();
+});
 test('recording completed elsewhere loads without reopening the article', async () => {
   let loaded = null;
   const { flow, element } = setup({ url: 'storage://stash-audio/user/job.mp3', initAudio: async u => { loaded=u; return true; } });
@@ -78,6 +90,17 @@ test('missing migration produces a recoverable setup message', async () => {
   assert.match(element('audio-status-title').textContent, /setup/);
   assert.equal(flow.action, 'refresh');
   flow.close();
+});
+test('future recordings show their expiry date; existing recordings do not', async () => {
+  const { flow, element } = setup({ url:'storage://stash-audio/user/job.mp3',expiresAt:'2027-01-18T12:00:00Z' });
+  await flow.refresh(flow.epoch);
+  assert.match(element('audio-expiry').textContent,/2027/);
+  assert.ok(!element('audio-expiry').classList.contains('hidden'));
+  flow.close();
+  const existing=setup({ url:'storage://stash-audio/user/prior.mp3' });
+  await existing.flow.refresh(existing.flow.epoch);
+  assert.ok(existing.element('audio-expiry').classList.contains('hidden'));
+  existing.flow.close();
 });
 test('double clicks create one idempotent request', async () => {
   const { flow, count } = setup();

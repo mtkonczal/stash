@@ -772,6 +772,7 @@ input, select {
   font-size: 14px;
 }
 .audio-status-copy { flex: 1; min-width: 140px; overflow-wrap: anywhere; }
+.audio-expiry { margin: -12px 0 20px; font-size: 12px; line-height: 1.5; color: var(--text-secondary); }
 .audio-status-copy p { margin: 0; }
 #audio-status-title { font-weight: 600; }
 #audio-status-detail { margin-top: 4px; color: var(--text-secondary); line-height: 1.5; }
