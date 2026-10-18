@@ -13,7 +13,7 @@
   <link rel="apple-touch-icon" href="icons/icon192.png">
 
   <!-- Styles -->
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=sky1">
 
   <!-- Supabase -->
   <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -317,9 +317,13 @@
               <option value="2">2x</option>
             </select>
           </div>
-          <div id="audio-generating" class="audio-generating hidden">
-            <div class="audio-generating-spinner"></div>
-            <span>Generating audio...</span>
+          <div id="audio-status" class="audio-status hidden" role="status" aria-live="polite" aria-atomic="true">
+            <div id="audio-status-spinner" class="audio-generating-spinner hidden" aria-hidden="true"></div>
+            <div class="audio-status-copy">
+              <p id="audio-status-title"></p>
+              <p id="audio-status-detail"></p>
+            </div>
+            <button id="audio-request-btn" class="btn secondary hidden" type="button">Generate audio</button>
           </div>
           <h1 id="reading-title"></h1>
           <div id="reading-body" class="reading-body"></div>
@@ -492,7 +496,8 @@
   <!-- Config. defer keeps execution order after the deferred CDN scripts
        above (deferred scripts run in document order after parsing). -->
   <script defer src="config.js"></script>
-  <script defer src="app.js"></script>
+  <script defer src="audio-workflow.js?v=sky1"></script>
+  <script defer src="app.js?v=sky1"></script>
 
   <!-- Register Service Worker -->
   <script>

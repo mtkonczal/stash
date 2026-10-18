@@ -1,0 +1,10 @@
+{
+  "profile": "product-admin",
+  "sourceRoots": ["web"],
+  "locale": "en-US",
+  "canonicalMap": "UX-CONTRACT.md",
+  "requiredCapabilities": ["CRUD", "Form", "Select/Listbox", "Scrollbar", "Toast"],
+  "ownership": { "Select/Listbox": "native" },
+  "commands": { "unit": "node --test tests/audio-workflow.test.cjs" },
+  "evidence": { "failurePaths": "tests/audio-workflow.test.cjs", "crudFullFlow": "tests/audio-queue.test.mjs" }
+}

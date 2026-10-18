@@ -31,6 +31,7 @@ class StashApp {
       CONFIG.SUPABASE_URL,
       CONFIG.SUPABASE_ANON_KEY
     );
+    this.audioWorkflow = new window.StashAudioWorkflow(this);
 
     // Load theme preference
     this.loadTheme();
@@ -352,6 +353,8 @@ class StashApp {
   }
 
   showAuthScreen() {
+    this.audioWorkflow?.close();
+    this.stopAudio();
     // Clear the pre-paint optimistic flag set by the inline script in
     // index.html, otherwise its CSS keeps the auth screen hidden.
     document.documentElement.classList.remove('has-session');
@@ -1136,11 +1139,15 @@ class StashApp {
   }
 
   async openReadingPane(save) {
+    const readingEpoch = this.readingEpoch = (this.readingEpoch || 0) + 1;
     this.currentSave = save;
     const pane = document.getElementById('reading-pane');
 
     // Stop any existing audio
     this.stopAudio();
+    this.audioWorkflow.close();
+    document.getElementById('audio-status').classList.add('hidden');
+    document.getElementById('audio-player').classList.add('hidden');
 
     document.getElementById('reading-title').textContent = save.title || 'Untitled';
     document.getElementById('reading-meta').innerHTML = `
@@ -1164,28 +1171,11 @@ class StashApp {
         .eq('id', save.id)
         .single();
       // User may have closed the pane or opened another save meanwhile
-      if (this.currentSave?.id !== save.id) return;
+      if (this.currentSave?.id !== save.id || this.readingEpoch !== readingEpoch) return;
       if (!error) save.content = data?.content ?? null;
     }
 
-    // Handle audio player visibility
-    const audioPlayer = document.getElementById('audio-player');
-    const audioGenerating = document.getElementById('audio-generating');
-
-    if (save.audio_url) {
-      // Audio is ready - show player
-      audioPlayer.classList.remove('hidden');
-      audioGenerating.classList.add('hidden');
-      this.initAudio(save.audio_url);
-    } else if (save.content && save.content.length > 100 && !save.highlight) {
-      // Content exists but no audio yet - show generating indicator
-      audioPlayer.classList.add('hidden');
-      audioGenerating.classList.remove('hidden');
-    } else {
-      // No audio applicable (highlights, short content)
-      audioPlayer.classList.add('hidden');
-      audioGenerating.classList.add('hidden');
-    }
+    this.audioWorkflow.open(save);
 
     if (save.highlight) {
       document.getElementById('reading-body').innerHTML = `
@@ -1207,10 +1197,12 @@ class StashApp {
   }
 
   closeReadingPane() {
+    this.readingEpoch = (this.readingEpoch || 0) + 1;
     const pane = document.getElementById('reading-pane');
     pane.classList.remove('open');
     // Stop audio when closing
     this.stopAudio();
+    this.audioWorkflow.close();
     // Reset progress bar
     const progressFill = document.getElementById('reading-progress-fill');
     if (progressFill) progressFill.style.width = '0%';
@@ -1242,22 +1234,29 @@ class StashApp {
   // Audio player methods
   async initAudio(url) {
     this.stopAudio();
+    const version = this.audioInitVersion;
 
     // If the URL is already public, use it directly to avoid signed URL/RLS issues
     let audioSrc = url;
-    if (!url.includes('/storage/v1/object/public/')) {
+    if (url.startsWith('storage://')) {
+      const [bucket, ...parts] = url.slice('storage://'.length).split('/');
+      audioSrc = await this.getSignedAudioUrl(parts.join('/'), bucket);
+      if (version !== this.audioInitVersion || !audioSrc) return false;
+    } else if (!url.includes('/storage/v1/object/public/')) {
       // Extract filename from URL and get a signed URL
       const filename = url.split('/').pop();
       const signedUrl = await this.getSignedAudioUrl(filename);
 
       if (!signedUrl) {
         console.error('Failed to get signed URL for audio');
-        return;
+        return false;
       }
       audioSrc = signedUrl;
     }
+    if (version !== this.audioInitVersion) return false;
 
     this.audio = new Audio(audioSrc);
+    const audio = this.audio;
     this.isPlaying = false;
 
     // Reset UI
@@ -1269,39 +1268,62 @@ class StashApp {
 
     // Set up event listeners
     this.audio.addEventListener('loadedmetadata', () => {
+      if (this.audio !== audio) return;
       document.getElementById('audio-duration').textContent = this.formatTime(this.audio.duration);
     });
 
     this.audio.addEventListener('timeupdate', () => {
+      if (this.audio !== audio) return;
       const progress = (this.audio.currentTime / this.audio.duration) * 100;
       document.getElementById('audio-progress').style.width = `${progress}%`;
       document.getElementById('audio-current').textContent = this.formatTime(this.audio.currentTime);
     });
 
     this.audio.addEventListener('ended', () => {
+      if (this.audio !== audio) return;
       this.isPlaying = false;
       this.updatePlayButton();
     });
 
-    this.audio.addEventListener('error', (e) => {
-      console.error('Audio error:', e);
+    this.audio.addEventListener('error', () => {
+      if (this.audio !== audio) return;
+      this.isPlaying = false;
+      this.updatePlayButton();
+      this.audioWorkflow.loadedUrl = null;
+      document.getElementById('audio-player').classList.add('hidden');
+      this.audioWorkflow.render('Audio could not play', {
+        detail: 'Your recording is saved. Reload the audio to try again.', button: 'Load audio', action: 'refresh',
+      });
     });
+    return true;
   }
 
-  toggleAudioPlayback() {
+  async toggleAudioPlayback() {
     if (!this.audio) return;
 
     if (this.isPlaying) {
       this.audio.pause();
       this.isPlaying = false;
     } else {
-      this.audio.play();
-      this.isPlaying = true;
+      const audio = this.audio;
+      try {
+        await audio.play();
+        if (this.audio !== audio) return;
+        this.isPlaying = true;
+      } catch (_) {
+        if (this.audio !== audio) return;
+        this.isPlaying = false;
+        this.audioWorkflow.loadedUrl = null;
+        this.audioWorkflow.render('Playback did not start', {
+          detail: 'Reload the audio, then press Play.', button: 'Load audio', action: 'refresh',
+        });
+      }
     }
     this.updatePlayButton();
   }
 
   stopAudio() {
+    this.audioInitVersion = (this.audioInitVersion || 0) + 1;
     if (this.audio) {
       this.audio.pause();
       this.audio.src = '';
@@ -1331,14 +1353,23 @@ class StashApp {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   }
 
-  async getSignedAudioUrl(path) {
+  async getSignedAudioUrl(path, bucket = 'audio') {
     // Get a signed URL for the audio file (valid for 1 hour)
-    const { data, error } = await this.supabase.storage
-      .from('audio')
-      .createSignedUrl(path, 3600);
+    let timer;
+    let result;
+    try {
+      result = await Promise.race([
+        this.supabase.storage.from(bucket).createSignedUrl(path, 3600),
+        new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Audio link timed out')), 15000); }),
+      ]);
+    } catch (_) {
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
+    const { data, error } = result;
 
     if (error) {
-      console.error('Error getting signed URL:', error);
       return null;
     }
     return data.signedUrl;
@@ -1776,7 +1807,7 @@ class StashApp {
         throw new Error(data.error || `Save failed (HTTP ${response.status}).`);
       }
 
-      this.setAddLinkStatus('Saved! Audio will generate shortly.', 'success');
+      this.setAddLinkStatus('Saved! Audio is queued for your Mac.', 'success');
       await this.refreshSaves(); // new row must come from the server
       setTimeout(() => this.hideAddLinkModal(), 700);
     } catch (err) {

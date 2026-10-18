@@ -758,6 +758,30 @@ input, select {
   animation: spin 0.8s linear infinite;
 }
 
+.audio-status {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 12px 16px;
+  margin-bottom: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-secondary);
+  color: var(--text);
+  font-size: 14px;
+}
+.audio-status-copy { flex: 1; min-width: 140px; overflow-wrap: anywhere; }
+.audio-status-copy p { margin: 0; }
+#audio-status-title { font-weight: 600; }
+#audio-status-detail { margin-top: 4px; color: var(--text-secondary); line-height: 1.5; }
+#audio-request-btn { min-width: 140px; min-height: 44px; }
+#audio-request-btn:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+#audio-request-btn:disabled { opacity: 0.6; cursor: wait; }
+@media (prefers-reduced-motion: reduce) {
+  .audio-generating-spinner { animation: none; }
+}
+
 @media (max-width: 768px) {
   .audio-player {
     padding: 10px 12px;

@@ -26,3 +26,11 @@ tts/.env
 # Build artifacts
 *.zip
 supabase/.temp/
+
+# Local Kokoro runtime, model downloads, and generated audition files
+tts/.venv-kokoro/
+tts/models/
+tts/auditions/
+tts/state/
+tts/__pycache__/
+tts/tests/__pycache__/
