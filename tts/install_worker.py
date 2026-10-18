@@ -73,7 +73,8 @@ def main():
         "RunAtLoad": True,
         "KeepAlive": True,
         "ThrottleInterval": 60,
-        "ProcessType": "Background",
+        # This is user-requested inference; Background can starve ONNX renders.
+        "ProcessType": "Standard",
         "StandardOutPath": str(target / "worker.out.log"),
         "StandardErrorPath": str(target / "worker.err.log"),
     }

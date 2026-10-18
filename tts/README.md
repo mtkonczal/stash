@@ -70,6 +70,8 @@ tail -f "$HOME/Library/Application Support/StashAudio/worker.err.log"
   backlog is submitted. Existing MP3s are not regenerated.
 - Jobs snapshot the article text at request time. Later text edits do not
   silently change an existing recording. Only Sky is supported by this queue.
+- The LaunchAgent uses Standard scheduling. Background scheduling severely
+  throttled real ONNX renders in the live trial, despite foreground tests passing.
 - Claims are atomic and have a ten-minute lease, renewed during generation and
   upload. One local worker runs at a time. Stale workers cannot finish jobs.
 - Each render section is limited to three minutes. A stalled subprocess is
