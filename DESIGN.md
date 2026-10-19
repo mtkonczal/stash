@@ -87,11 +87,12 @@ it. Playback starts only after a user's Play action.
 Plain English. Measured progress is sections completed, not an invented ETA.
 Waiting for a sleeping/offline Mac must be stated directly. Future recordings
 show their expiry date. Expired recordings offer Regenerate audio; existing
-recordings have no expiry and remain available.
+active recordings have no expiry. Archived status explains that unarchiving
+is required before generation.
 
 ## Do's and Don'ts
 
-- Do preserve existing recordings and the user's reading position.
+- Do preserve active existing recordings and the user's reading position.
 - Do use the existing runtime tokens and shared action classes.
 - Don't infer generation from a missing file or hide failures behind a spinner.
 - Don't introduce paid services, celebrity voice imitation, or a visual redesign.

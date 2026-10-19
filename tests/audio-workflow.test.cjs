@@ -2,7 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { StashAudioWorkflow } = require('../web/audio-workflow.js');
 
-function setup({ url = null, expiresAt = null, job = null, lastSeen = null, error = null, initAudio = async () => true } = {}) {
+function setup({ url = null, expiresAt = null, archived = false, job = null, lastSeen = null, error = null, initAudio = async () => true } = {}) {
   const elements = new Map();
   function element(id) {
     if (!elements.has(id)) {
@@ -20,7 +20,7 @@ function setup({ url = null, expiresAt = null, job = null, lastSeen = null, erro
   let requests = 0;
   const app = { user: { id: 'user' }, patchLocalSave() {}, stopAudio() {}, initAudio, supabase: {
     from(table) {
-      const result = table === 'saves' ? { data: { audio_url: url, audio_expires_at: expiresAt }, error } :
+      const result = table === 'saves' ? { data: { audio_url: url, audio_expires_at: expiresAt, is_archived: archived }, error } :
         table === 'audio_jobs' ? { data: job, error } : { data: lastSeen ? { last_seen: lastSeen } : null, error };
       const query = { select() { return this; }, eq() { return this; }, abortSignal() { return this; },
         single: async () => result, maybeSingle: async () => result };
@@ -118,4 +118,24 @@ test('a closed pane cannot be updated by a delayed playback link', async () => {
   resolve(true);
   await refresh;
   assert.ok(element('audio-player').classList.contains('hidden'));
+});
+
+test('archived articles clear cached audio and explain how to regenerate', async () => {
+  const { flow, element } = setup({ archived:true, url:'old-url' });
+  flow.save.audio_url='old-url';
+  flow.loadedUrl='old-url';
+  await flow.refresh(flow.epoch);
+  assert.equal(flow.save.audio_url,null);
+  assert.equal(element('audio-status-title').textContent,'Archived article');
+  assert.match(element('audio-status-detail').textContent,/Unarchive/);
+  assert.ok(element('audio-request-btn').classList.contains('hidden'));
+  assert.ok(element('audio-player').classList.contains('hidden'));
+  flow.close();
+});
+test('unarchived cancelled jobs offer regeneration without an expiry claim', async () => {
+  const { flow, element } = setup({ job:{status:'cancelled'} });
+  await flow.refresh(flow.epoch);
+  assert.equal(element('audio-status-title').textContent,'Audio removed');
+  assert.equal(element('audio-request-btn').textContent,'Regenerate audio');
+  flow.close();
 });

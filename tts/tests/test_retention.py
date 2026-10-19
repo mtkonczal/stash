@@ -19,15 +19,23 @@ class RetentionTests(unittest.TestCase):
 
     def test_exact_private_paths_only_and_ack_after_delete(self):
         api = Mock(user=USER)
-        api.rpc.side_effect = [[{'id':'outbox-id', 'object_name':KEY}], 1]
+        api.rpc.side_effect = [[{'id':'outbox-id', 'bucket_name':'stash-audio', 'object_name':KEY}], 1]
         self.assertEqual(retention.cleanup_expired_audio(api), 1)
         api.call.assert_called_once_with('/storage/v1/object/stash-audio',
             {'prefixes':[KEY]}, method='DELETE', timeout=120)
         self.assertEqual(api.rpc.call_args_list[-1].args[0], 'ack_stash_audio_deletions')
 
+    def test_legacy_files_use_the_legacy_bucket(self):
+        api = Mock(user=USER)
+        key = '20000000-0000-4000-8000-000000000001.mp3'
+        api.rpc.side_effect = [[{'id':'legacy', 'bucket_name':'audio', 'object_name':key}], 1]
+        self.assertEqual(retention.cleanup_expired_audio(api), 1)
+        api.call.assert_called_once_with('/storage/v1/object/audio',
+            {'prefixes':[key]}, method='DELETE', timeout=120)
+
     def test_delete_failure_leaves_outbox_unacknowledged(self):
         api = Mock(user=USER)
-        api.rpc.return_value = [{'id':'outbox-id','object_name':KEY}]
+        api.rpc.return_value = [{'id':'outbox-id','bucket_name':'stash-audio', 'object_name':KEY}]
         api.call.side_effect = RuntimeError('Network unavailable')
         with self.assertRaises(RuntimeError):
             retention.cleanup_expired_audio(api)
@@ -37,7 +45,7 @@ class RetentionTests(unittest.TestCase):
         for key in ['other-user/file.mp3', USER+'/', USER+'/../file.mp3', USER+'/recording.mp3']:
             with self.subTest(key=key):
                 api = Mock(user=USER)
-                api.rpc.return_value = [{'id':'outbox-id','object_name':key}]
+                api.rpc.return_value = [{'id':'outbox-id','bucket_name':'stash-audio', 'object_name':key}]
                 with self.assertRaisesRegex(RuntimeError,'unexpected object path'):
                     retention.cleanup_expired_audio(api)
                 api.call.assert_not_called()

@@ -18,7 +18,7 @@ the audio migrations under `supabase/migrations/` and `tts/worker.py`.
 
 - New full articles queue automatically after the migration. Existing articles
   are not backfilled automatically. Highlights and text under 100 characters
-  are ineligible. Existing audio is never replaced by this migration.
+  are ineligible. Active existing audio is never replaced automatically.
 - Generate/Retry/Regenerate is authenticated, ownership checked, and idempotent. Users
   cannot directly edit job status or claim work through browser credentials.
 - State: queued → generating → ready; failures back off twice, then failed.
@@ -33,9 +33,9 @@ the audio migrations under `supabase/migrations/` and `tts/worker.py`.
 - Async replies cannot update a closed pane or another article. Playback link
   failures offer Load audio without submitting a new synthesis job.
 - New MP3s are private in `stash-audio`, readable only by their owner via signed
-  links. The legacy public `audio` bucket and URLs remain unchanged.
-- Existing recordings have no expiry. Future audio expires three calendar
-  months after generation; the Mac worker checks roughly hourly while awake.
+  links. Legacy public recordings use the same archive/delete cleanup policy.
+- Active existing recordings have no expiry. Future audio expires three calendar
+  months after generation; the Mac worker checks roughly every minute while awake.
   Articles remain saved. Expired audio offers Regenerate audio, using current
   article text and a fresh object UUID and three-month window. No local backups.
 - Future ready recordings show their expiry date. An expired cached playback
@@ -44,12 +44,20 @@ the audio migrations under `supabase/migrations/` and `tts/worker.py`.
   Failed deletions retry; regenerations cannot reuse an expired object path.
   Storage limits still apply to all retained recordings.
 
+- Archive clears audio and cancels queued/in-flight synthesis, including legacy
+  recordings. The article remains. Archived audio status explains that the user
+  must unarchive before generating again; unarchiving never queues automatically.
+- Delete durably queues the MP3 before removing the article and job. Cleanup
+  catches late uploads and old unreferenced files. Confirmed cancelled/deleted
+  job caches are discarded; active and retryable caches are preserved.
+
 ## Business-source traceability
 
 | Decision | Source | UI consequence |
 |---|---|---|
 | Free local Sky synthesis | User's explicit choice in this chat | No paid provider or billing UI |
-| Existing articles/audio preserved | Approved replacement plan | No bulk regeneration or deletion |
+| Active articles/audio preserved | Approved replacement plan | No bulk regeneration |
+| Archive removes audio; delete removes both, including legacy | User’s explicit instruction on October 19, 2026 | Unarchive before regeneration |
 | Existing recordings stay; future audio expires after three calendar months | User’s explicit retention choice | Expiry date and Regenerate audio |
 | Owner access only | Existing `supabase/schema.sql` RLS model | Authenticated Generate/Retry and private new audio |
 | New-article automatic queue | Approved workflow | Saving a new article requires no second action |

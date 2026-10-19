@@ -73,11 +73,12 @@ class StashAudioWorkflow {
     try {
       // Fetch audio_url afresh even for cached saves. Never infer status from
       // a missing URL, and never fetch the article's large content to poll.
-      const result = await this.app.supabase.from('saves').select('audio_url,audio_expires_at')
+      const result = await this.app.supabase.from('saves').select('audio_url,audio_expires_at,is_archived')
         .eq('id', save.id).abortSignal(controller.signal).single();
       if (epoch !== this.epoch) return;
       if (result.error) throw result.error;
-      const url = result.data?.audio_url;
+      const archived = result.data?.is_archived;
+      const url = archived ? null : result.data?.audio_url;
       if (url) {
         terminal = true;
         save.audio_url = url;
@@ -111,6 +112,11 @@ class StashAudioWorkflow {
       }
       document.getElementById('audio-player').classList.add('hidden');
       document.getElementById('audio-expiry').classList.add('hidden');
+      if (archived) {
+        terminal = true;
+        this.render('Archived article', { detail: 'Audio is removed when archived. Unarchive this article to generate it again.' });
+        return;
+      }
       const [jobs, workers] = await Promise.all([
         this.app.supabase.from('audio_jobs')
           .select('status,attempts,completed_chunks,total_chunks,last_error,lease_until,available_at')
@@ -125,6 +131,9 @@ class StashAudioWorkflow {
       if (!job) {
         terminal = true;
         this.render('Audio hasn’t been requested', { detail: 'Generate a full recording with Sky.', button: 'Generate audio' });
+      } else if (job.status === 'cancelled') {
+        terminal = true;
+        this.render('Audio removed', { detail: 'Generate a fresh recording with Sky.', button: 'Regenerate audio' });
       } else if (job.status === 'expired') {
         terminal = true;
         this.render('Audio expired after 3 months', {

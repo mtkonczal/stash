@@ -6,13 +6,13 @@
 // picks up any deploy. Supabase API calls bypass the SW entirely.
 //
 // Bump CACHE_NAME on deploys that must take effect immediately.
-const CACHE_NAME = 'stash-v6-retention';
+const CACHE_NAME = 'stash-v7-lifecycle';
 const ASSETS = [
   '/',
   '/index.html',
-  '/styles.css?v=sky2',
-  '/app.js?v=sky2',
-  '/audio-workflow.js?v=sky2',
+  '/styles.css?v=sky3',
+  '/app.js?v=sky3',
+  '/audio-workflow.js?v=sky3',
   '/config.js',
   '/manifest.json',
   'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2',

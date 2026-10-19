@@ -45,7 +45,7 @@ const root = path.resolve(__dirname, '..');
           const q = { fields:'', select(fields) { this.fields=fields; return this; }, eq() { return this; },
             abortSignal() { return this; }, order() { return this; },
             result() {
-              if (table === 'saves') return { data: { audio_url: window.fixture.url, audio_expires_at:window.fixture.expiresAt, content: 'An article. '.repeat(30) }, error: window.fixture.error };
+              if (table === 'saves') return { data: { audio_url: window.fixture.url, audio_expires_at:window.fixture.expiresAt, is_archived:window.fixture.archived, content: 'An article. '.repeat(30) }, error: window.fixture.error };
               if (table === 'audio_jobs') return { data: window.fixture.job, error: window.fixture.error };
               if (table === 'audio_workers') return { data: window.fixture.seen ? { last_seen: window.fixture.seen } : null, error: window.fixture.error };
               return { data: [], error: null };
@@ -103,6 +103,13 @@ const root = path.resolve(__dirname, '..');
     assert.equal(await page.evaluate(() => app.audio.playbackRate),1.5);
     await page.evaluate(async () => {
       fixture.url=null;
+      fixture.archived=true;
+      await app.audioWorkflow.refresh(app.audioWorkflow.epoch);
+    });
+    await page.getByText('Archived article', {exact:true}).waitFor();
+    assert.equal(await page.locator('#audio-request-btn').isVisible(),false);
+    await page.evaluate(async () => {
+      fixture.archived=false;
       fixture.job={ status:'expired' };
       await app.audioWorkflow.refresh(app.audioWorkflow.epoch);
     });
@@ -120,7 +127,7 @@ const root = path.resolve(__dirname, '..');
     await page.getByText('Audio setup isn’t available yet', { exact:true }).waitFor();
     await page.evaluate(() => app.closeReadingPane());
     assert.deepEqual(failures,[]);
-    console.log('Chromium: Generate, keyboard, waiting, progress, failed/retry, private playback, speed, expired/regenerate, close, setup error, narrow viewport, dark theme, reduced motion passed');
+    console.log('Chromium: Generate, keyboard, waiting, progress, failed/retry, private playback, speed, archive/unarchive, expired/regenerate, close, setup error, narrow viewport, dark theme, reduced motion passed');
   } finally {
     if (browser) await browser.close();
     await new Promise(resolve => server.close(resolve));

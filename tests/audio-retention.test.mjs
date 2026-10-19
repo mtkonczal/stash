@@ -97,5 +97,72 @@ await check(`select status from public.audio_deletions where id='${secondDeletio
 await check(`select audio_url from public.saves where id='${legacy}'`,legacyUrl);
 await check(`select audio_url from public.saves where id='${preserved}'`,priorUrl);
 await check(`select status from public.audio_jobs where id='${priorJob}'`,'ready');
+
+// Archive/delete migration and legacy backfill.
+const archivedLegacy='20000000-0000-4000-8000-000000000010';
+const activeLegacy='20000000-0000-4000-8000-000000000011';
+const queuedSave='20000000-0000-4000-8000-000000000012';
+const legacyLink=id=>`https://fvydjrhqaeemkdakqnfk.supabase.co/storage/v1/object/public/audio/${id}.mp3`;
+await db.exec(`insert into public.saves(id,user_id,title,content,audio_url,is_archived) values
+ ('${archivedLegacy}','${user}','Archived legacy',repeat('Article text. ',30),'${legacyLink(archivedLegacy)}',true),
+ ('${activeLegacy}','${user}','Active legacy',repeat('Article text. ',30),'${legacyLink(activeLegacy)}',false);
+ insert into storage.objects(bucket_id,name) values('audio','${archivedLegacy}.mp3'),('audio','${activeLegacy}.mp3');`);
+await db.exec(await readFile(new URL('../supabase/migrations/202610190001_audio_archive_delete.sql',import.meta.url),'utf8'));
+await check(`select audio_url is null from public.saves where id='${archivedLegacy}'`,true);
+await check(`select content=repeat('Article text. ',30) from public.saves where id='${archivedLegacy}'`,true);
+await check(`select audio_url from public.saves where id='${activeLegacy}'`,legacyLink(activeLegacy));
+await check(`select status from public.audio_deletions where object_name='${archivedLegacy}.mp3'`,'pending');
+await db.exec(`insert into public.saves(id,user_id,title,content) values('${queuedSave}','${user}','Queued',repeat('Article text. ',30))`);
+const {rows:[running]}=await db.query(`select * from public.claim_stash_audio('${user}','${token}')`);
+await db.exec(`update public.saves set is_archived=true where id='${queuedSave}'`);
+await check(`select status from public.audio_jobs where save_id='${queuedSave}'`,'cancelled');
+await check(`select public.renew_stash_audio('${running.id}','${token}',1,2)`,false);
+await check(`select public.finish_stash_audio('${running.id}','${token}','storage://stash-audio/${user}/${running.id}.mp3')`,false);
+await assert.rejects(db.exec(`select public.enqueue_stash_audio('${queuedSave}','${user}')`),/Unarchive/);checks++;
+await db.exec(`update public.saves set is_archived=false where id='${queuedSave}'`);
+await check(`select count(*)::int from public.claim_stash_audio('${user}','${token}')`,0);
+const {rows:[replacement]}=await db.query(`select * from public.enqueue_stash_audio('${queuedSave}','${user}')`);
+assert.notEqual(replacement.id,running.id);checks++;
+// Late upload after cancellation is unreferenced and must be collected.
+await db.exec(`insert into storage.objects(bucket_id,name) values('stash-audio','${user}/${running.id}.mp3')`);
+const {rows:batch}=await db.query(`select * from public.collect_stash_audio_cleanup('${user}')`);
+assert.ok(batch.some(x=>x.bucket_name==='audio'&&x.object_name===archivedLegacy+'.mp3'));checks++;
+assert.ok(batch.some(x=>x.bucket_name==='stash-audio'&&x.object_name===user+'/'+running.id+'.mp3'));checks++;
+assert.ok(!batch.some(x=>x.object_name===activeLegacy+'.mp3'));checks++;
+// The original collector cannot acknowledge a legacy deletion against the wrong bucket.
+await db.query(`select * from public.collect_stash_audio_expirations('${user}')`);
+await check(`select status from public.audio_deletions where object_name='${archivedLegacy}.mp3'`,'pending');
+await db.query(`select * from public.claim_stash_audio('${user}','${token}')`);
+const replacementKey=`${user}/${replacement.id}.mp3`;
+await db.exec(`insert into storage.objects(bucket_id,name) values('stash-audio','${replacementKey}')`);
+await check(`select public.finish_stash_audio('${replacement.id}','${token}','storage://stash-audio/${replacementKey}')`,true);
+await db.exec(`update public.saves set is_archived=true where id='${queuedSave}'`);
+await check(`select audio_url is null from public.saves where id='${queuedSave}'`,true);
+await check(`select status from public.audio_deletions where object_name='${replacementKey}'`,'pending');
+// Hard deletion queues legacy MP3 removal before the save and jobs disappear.
+await db.exec(`delete from public.saves where id='${activeLegacy}'`);
+await check(`select count(*)::int from public.saves where id='${activeLegacy}'`,0);
+await check(`select status from public.audio_deletions where object_name='${activeLegacy}.mp3'`,'pending');
+await db.exec(`delete from storage.objects where bucket_id='audio' and name='${activeLegacy}.mp3'`);
+await check(`select public.ack_stash_audio_deletions('${user}',array[(select id from public.audio_deletions where object_name='${activeLegacy}.mp3')])`,1);
+// A late upload can recreate an object after its deletion was acknowledged.
+await db.exec(`insert into storage.objects(bucket_id,name) values('audio','${activeLegacy}.mp3')`);
+await db.query(`select * from public.collect_stash_audio_cleanup('${user}')`);
+// Multi-user legacy sweep cannot infer its owner; the trigger can requeue known ownership.
+await db.query(`select public.queue_stash_audio_deletion('${user}','audio','${activeLegacy}.mp3')`);
+await check(`select status from public.audio_deletions where object_name='${activeLegacy}.mp3'`,'pending');
+// Legacy unknown-orphan sweeping is disabled when ownership cannot be established.
+const orphan='50000000-0000-4000-8000-000000000001.mp3';
+await db.exec(`insert into storage.objects(bucket_id,name) values('audio','${orphan}')`);
+await db.query(`select * from public.collect_stash_audio_cleanup('${user}')`);
+await check(`select count(*)::int from public.audio_deletions where object_name='${orphan}'`,0);
+await db.exec(`delete from auth.users where id='${other}'`);
+await db.query(`select * from public.collect_stash_audio_cleanup('${user}')`);
+await check(`select status from public.audio_deletions where object_name='${orphan}'`,'pending');
+await db.exec(`set role authenticated; set request.jwt.claim.sub='${user}'`);
+await assert.rejects(db.exec(`select public.collect_stash_audio_cleanup('${user}')`));checks++;
+await assert.rejects(db.exec(`select public.queue_stash_audio_deletion('${user}','audio','${orphan}')`));checks++;
+await db.exec('reset role');
+
 await db.close();
-console.log(`${checks} retention, existing-audio preservation, regeneration, and safe deletion checks passed`);
+console.log(`${checks} retention, archive/delete, legacy cleanup, regeneration, and permission checks passed`);

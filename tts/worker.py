@@ -289,6 +289,23 @@ def process_job(api, job, token, state):
         LOG.info("Audio ready for save %s (%s sections)", job["save_id"], lease.total)
 
 
+def discard_cancelled_caches(api, state):
+    """Remove checkpoints only for confirmed cancelled/deleted/completed jobs."""
+    cache = state / 'cache'
+    if not cache.exists():
+        return
+    for path in cache.iterdir():
+        if not path.is_dir():
+            continue
+        try:
+            job_id = str(uuid.UUID(path.name))
+        except ValueError:
+            continue
+        rows = api.call('/rest/v1/audio_jobs?id=eq.' + job_id + '&select=status', method='GET')
+        if not rows or rows[0]['status'] in ('cancelled', 'expired', 'ready'):
+            shutil.rmtree(path)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--once", action="store_true", help="Process at most one queued job, then exit")
@@ -346,7 +363,8 @@ def main():
                     from retention import cleanup_expired_audio
                     try:
                         cleanup_expired_audio(api)
-                        next_cleanup = time.monotonic() + 3600
+                        discard_cancelled_caches(api, state)
+                        next_cleanup = time.monotonic() + 60
                     except Exception:
                         # Cleanup failures must not block synthesis or lose
                         # the durable deletion outbox. Retry in one minute.

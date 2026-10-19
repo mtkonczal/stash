@@ -3,20 +3,21 @@
 New full articles are queued in Supabase. A local macOS worker generates the
 entire article with Kokoro's `af_sky` voice and uploads an MP3 to private
 Supabase storage. No paid speech API, Git commit, or push is involved in
-generation. Existing recordings remain playable. The old `tts.py` is retained
+generation. Active existing recordings remain playable. The old `tts.py` is retained
 for reference, but its LaunchAgent is disabled after installing the replacement.
 
 See [KOKORO.md](KOKORO.md) for model download and voice audition instructions.
 
 ## Install
 
-Apply the three migrations below once, in order, in the Supabase SQL editor
+Apply the migrations below once, in order, in the Supabase SQL editor
 or with an authenticated, linked CLI:
 
 ```sh
 supabase db query --linked --file supabase/migrations/202610180001_audio_jobs.sql
 supabase db query --linked --file supabase/migrations/202610180002_audio_storage_budget.sql
 supabase db query --linked --file supabase/migrations/202610180003_audio_retention.sql
+supabase db query --linked --file supabase/migrations/202610190001_audio_archive_delete.sql
 ```
 
 Provide `STASH_SUPABASE_URL`, `STASH_SUPABASE_SERVICE_ROLE_KEY`, and
@@ -67,7 +68,7 @@ tail -f "$HOME/Library/Application Support/StashAudio/worker.err.log"
 
 - Only new eligible articles queue automatically, including articles whose full
   content arrives in a later update. Old articles need Generate audio; no bulk
-  backlog is submitted. Existing MP3s are not regenerated.
+  backlog is submitted. Active existing MP3s are not regenerated.
 - Jobs snapshot the article text at request time. Later text edits do not
   silently change an existing recording. Only Sky is supported by this queue.
 - The LaunchAgent uses Standard scheduling. Background scheduling severely
@@ -89,19 +90,28 @@ The web client exchanges this reference for a one-hour signed playback link.
 The legacy public `audio` bucket is unchanged. The browser refreshes status
 while an article is open, cancels stale requests, and never autoplays.
 
-Recordings that existed before the retention migration have no expiry and stay
-indefinitely. Future recordings expire three calendar months after successful
-generation. The worker checks on startup and roughly hourly while the Mac is
+Active recordings that existed before the retention migration have no expiry.
+Archiving clears the audio reference and cancels generation immediately; the
+article remains. Unarchive and choose Generate/Regenerate audio to listen again.
+Unarchiving alone never queues generation. Deleting a save removes the article
+and queues its MP3 for deletion before cascading away the job. These rules also
+apply to legacy recordings. Future recordings expire three calendar months
+after successful generation. The worker checks on startup and roughly every minute while the Mac is
 awake; a sleeping Mac catches up when it wakes. Cleanup removes only the expired
 MP3, keeping the article and offering Regenerate audio. Regeneration uses current
 article text, a new object UUID, and a fresh three-month window. No local backup
 is made. A durable deletion outbox retries Storage API failures; a regenerated
-file cannot share the expired file’s object path.
+file cannot share the expired file’s object path. Archive/delete cancellation
+fences stale workers; an orphan sweep catches uploads arriving after cancellation.
+Cancelled/deleted job checkpoints are also removed locally. Legacy unknown
+orphans are swept only when the database has exactly one account; otherwise
+cleanup requires the owner captured by the save’s archive/delete trigger.
 
 No automatic storage-plan upgrades. The worker checks
 storage size before each upload and refuses to exceed a 950 MB safety budget
-or the free service's 50 MB per-file upload limit. Grandfathered files are not
-deleted to make room, so the retained legacy library still counts against this limit. Free generation does not remove storage/transfer quotas.
+or the free service's 50 MB per-file upload limit. Active grandfathered files
+are not deleted to make room, so the retained legacy library still counts
+against this limit. Free generation does not remove storage/transfer quotas.
 
 ## Tests
 

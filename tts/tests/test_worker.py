@@ -10,6 +10,24 @@ spec.loader.exec_module(worker)
 
 
 class WorkerTests(unittest.TestCase):
+    def test_only_cancelled_deleted_and_completed_caches_are_discarded(self):
+        import uuid
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            statuses = ['queued','generating','failed','cancelled','expired','ready',None]
+            paths = []
+            for status in statuses:
+                path = state / 'cache' / str(uuid.uuid4())
+                path.mkdir(parents=True)
+                (path / 'section.wav').write_bytes(b'checkpoint')
+                paths.append(path)
+            api = Mock()
+            lookup = {path.name: ([] if status is None else [{'status':status}])
+                      for path,status in zip(paths,statuses)}
+            api.call.side_effect = lambda url, **kwargs: lookup[url.split('id=eq.')[1].split('&')[0]]
+            worker.discard_cancelled_caches(api,state)
+            self.assertEqual([p.exists() for p in paths], [True,True,True,False,False,False,False])
+
     def test_long_article_is_not_truncated(self):
         text = " ".join(f"word{i}" for i in range(7000))
         clean = worker.clean_text(text)
