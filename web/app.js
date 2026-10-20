@@ -232,6 +232,9 @@ class StashApp {
       this.toggleAudioPlayback();
     });
 
+    document.getElementById('audio-back-btn').addEventListener('click', () => this.skipAudio(-15));
+    document.getElementById('audio-forward-btn').addEventListener('click', () => this.skipAudio(15));
+
     document.getElementById('audio-speed').addEventListener('change', (e) => {
       if (this.audio) {
         this.audio.playbackRate = parseFloat(e.target.value);
@@ -1298,6 +1301,11 @@ class StashApp {
     return true;
   }
 
+  skipAudio(seconds) {
+    if (!this.audio || !Number.isFinite(this.audio.duration)) return;
+    this.audio.currentTime = Math.max(0, Math.min(this.audio.duration, this.audio.currentTime + seconds));
+  }
+
   async toggleAudioPlayback() {
     if (!this.audio) return;
 
@@ -1334,6 +1342,9 @@ class StashApp {
   }
 
   updatePlayButton() {
+    if (this.audio) {
+      document.getElementById('audio-summary-state').textContent = this.isPlaying ? 'Playing' : 'Ready';
+    }
     const playIcon = document.querySelector('#audio-play-btn .play-icon');
     const pauseIcon = document.querySelector('#audio-play-btn .pause-icon');
 

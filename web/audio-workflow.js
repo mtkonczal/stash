@@ -34,10 +34,14 @@ class StashAudioWorkflow {
   open(save) {
     this.close();
     this.save = save;
+    const section = document.getElementById('audio-section');
+    section.open = false;
+    section.classList.remove('hidden');
     document.getElementById('audio-player').classList.add('hidden');
     document.getElementById('audio-expiry').classList.add('hidden');
     if (!save.audio_url && (save.highlight || !save.content || save.content.trim().length < 100)) {
       document.getElementById('audio-status').classList.add('hidden');
+      section.classList.add('hidden');
       return;
     }
     this.render('Checking audio…');
@@ -45,6 +49,7 @@ class StashAudioWorkflow {
   }
 
   render(message, { detail = '', button = '', generating = false, action = 'request' } = {}) {
+    document.getElementById('audio-summary-state').textContent = message;
     const panel = document.getElementById('audio-status');
     panel.classList.remove('hidden');
     document.getElementById('audio-status-title').textContent = message;
@@ -94,6 +99,7 @@ class StashAudioWorkflow {
             return;
           }
         }
+        document.getElementById('audio-summary-state').textContent = 'Ready';
         document.getElementById('audio-status').classList.add('hidden');
         document.getElementById('audio-player').classList.remove('hidden');
         const expiry = document.getElementById('audio-expiry');

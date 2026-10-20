@@ -47,8 +47,8 @@ Use the existing system sans stack. Article prose retains its current size and
 line height. Audio status is 14px, with a semibold state title and regular detail.
 
 ## Layout
-Preserve sidebar, list, and reading pane. Audio status stays above the article
-title. Its action wraps on narrow screens and has a 44px minimum height.
+Preserve sidebar, list, and reading pane. Audio lives in a compact native disclosure above the article
+title, collapsed whenever an article opens. Its action wraps on narrow screens and has a 44px minimum height.
 
 ## Elevation & Depth
 Audio status uses a surface and border, without a new shadow or floating layer.
@@ -68,6 +68,9 @@ Reuse `.btn.secondary`. Labels are Generate audio, Retry audio, Check again,
 Regenerate audio, and Load audio, each tied to the corresponding action. Preserve focus outlines.
 
 ### Navigation and data display
+The Audio summary opens the player and job status. It shows Ready/Playing or
+current job status while collapsed. The expanded player has labelled 15-second
+back/forward buttons, clamped to recording boundaries. Controls wrap on phones.
 The reading pane owns audio status. Closing or changing the article cancels
 polling and invalidates in-flight responses without changing list position.
 

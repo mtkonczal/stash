@@ -2227,3 +2227,25 @@ input, select {
 .swipe-toast-undo:hover {
   color: #93c5fd;
 }
+
+/* Compact audio disclosure; controls keep the existing player styling. */
+.audio-section { margin-bottom: 20px; border: 1px solid var(--border); border-radius: var(--radius-lg); }
+.audio-section > summary { display: flex; align-items: center; gap: 10px; padding: 10px 12px; min-height: 44px; font-size: 14px; font-weight: 600; cursor: pointer; list-style: none; }
+.audio-section > summary::-webkit-details-marker { display: none; }
+.audio-section > summary:hover { background: var(--bg-secondary); border-radius: var(--radius-lg); }
+.audio-section > summary:focus-visible, .audio-skip-btn:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+.audio-summary-state { flex: 1; min-width: 0; font-size: 12px; font-weight: 400; color: var(--text-secondary); }
+.audio-chevron { flex-shrink: 0; }
+.audio-section[open] .audio-chevron { transform: rotate(180deg); }
+.audio-disclosure-content { padding: 0 12px 12px; }
+.audio-disclosure-content .audio-player { flex-wrap: wrap; gap: 8px; padding: 10px; margin-bottom: 0; }
+.audio-disclosure-content .audio-speed { background: var(--bg); color: var(--text); border-color: var(--border); }
+.audio-disclosure-content .audio-status { margin-bottom: 0; }
+.audio-disclosure-content .audio-expiry { margin: 8px 0 0; }
+.audio-skip-btn { min-width: 44px; min-height: 44px; padding: 0 6px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); color: var(--text); font-size: 12px; cursor: pointer; }
+.audio-skip-btn:hover { border-color: var(--primary); }
+.audio-skip-btn:active { background: var(--bg-secondary); }
+@media (max-width: 480px) {
+  .audio-disclosure-content .audio-progress-container { flex-basis: 100%; order: 1; min-width: 0; }
+  .audio-disclosure-content .audio-speed { margin-left: auto; min-height: 44px; }
+}

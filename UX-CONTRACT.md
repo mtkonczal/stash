@@ -16,6 +16,13 @@ the audio migrations under `supabase/migrations/` and `tts/worker.py`.
 
 ## State and recovery
 
+- Audio is a native details/summary disclosure, initially collapsed on every
+  article open. Its summary exposes job status or Ready/Playing. Expanding never
+  starts playback; collapsing never interrupts it. Ineligible saves hide it.
+- Back/Forward buttons seek 15 seconds and clamp at zero and recording duration.
+- Speed and playback-position persistence were assessed as practical, but remain
+  unchanged pending the user's next instruction.
+
 - New full articles queue automatically after the migration. Existing articles
   are not backfilled automatically. Highlights and text under 100 characters
   are ineligible. Active existing audio is never replaced automatically.

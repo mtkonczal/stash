@@ -13,7 +13,7 @@
   <link rel="apple-touch-icon" href="icons/icon192.png">
 
   <!-- Styles -->
-  <link rel="stylesheet" href="styles.css?v=sky3">
+  <link rel="stylesheet" href="styles.css?v=sky4">
 
   <!-- Supabase -->
   <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -291,41 +291,48 @@
         </div>
         <div class="reading-content" id="reading-content">
           <div id="reading-meta" class="reading-meta"></div>
-          <!-- Audio Player -->
-          <div id="audio-player" class="audio-player hidden">
-            <button class="audio-play-btn" id="audio-play-btn" title="Play audio">
-              <svg class="play-icon" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                <polygon points="5 3 19 12 5 21 5 3"></polygon>
-              </svg>
-              <svg class="pause-icon hidden" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                <rect x="6" y="4" width="4" height="16"></rect>
-                <rect x="14" y="4" width="4" height="16"></rect>
-              </svg>
-            </button>
-            <div class="audio-progress-container">
-              <div class="audio-time" id="audio-current">0:00</div>
-              <div class="audio-progress-bar" id="audio-progress-bar">
-                <div class="audio-progress" id="audio-progress"></div>
+          <!-- Native disclosure keeps audio compact until requested. -->
+          <details id="audio-section" class="audio-section hidden">
+            <summary><span>Audio</span><span id="audio-summary-state" class="audio-summary-state"></span><svg class="audio-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></summary>
+            <div class="audio-disclosure-content">
+              <div id="audio-player" class="audio-player hidden">
+                <button class="audio-skip-btn" id="audio-back-btn" type="button" aria-label="Back 15 seconds" title="Back 15 seconds">−15s</button>
+                <button class="audio-play-btn" id="audio-play-btn" title="Play audio">
+                  <svg class="play-icon" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                    <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                  </svg>
+                  <svg class="pause-icon hidden" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                    <rect x="6" y="4" width="4" height="16"></rect>
+                    <rect x="14" y="4" width="4" height="16"></rect>
+                  </svg>
+                </button>
+                <button class="audio-skip-btn" id="audio-forward-btn" type="button" aria-label="Forward 15 seconds" title="Forward 15 seconds">+15s</button>
+                <div class="audio-progress-container">
+                  <div class="audio-time" id="audio-current">0:00</div>
+                  <div class="audio-progress-bar" id="audio-progress-bar">
+                    <div class="audio-progress" id="audio-progress"></div>
+                  </div>
+                  <div class="audio-time" id="audio-duration">0:00</div>
+                </div>
+                <select class="audio-speed" id="audio-speed" title="Playback speed">
+                  <option value="0.75">0.75x</option>
+                  <option value="1" selected>1x</option>
+                  <option value="1.25">1.25x</option>
+                  <option value="1.5">1.5x</option>
+                  <option value="2">2x</option>
+                </select>
               </div>
-              <div class="audio-time" id="audio-duration">0:00</div>
+              <p id="audio-expiry" class="audio-expiry hidden"></p>
+              <div id="audio-status" class="audio-status hidden" role="status" aria-live="polite" aria-atomic="true">
+                <div id="audio-status-spinner" class="audio-generating-spinner hidden" aria-hidden="true"></div>
+                <div class="audio-status-copy">
+                  <p id="audio-status-title"></p>
+                  <p id="audio-status-detail"></p>
+                </div>
+                <button id="audio-request-btn" class="btn secondary hidden" type="button">Generate audio</button>
+              </div>
             </div>
-            <select class="audio-speed" id="audio-speed" title="Playback speed">
-              <option value="0.75">0.75x</option>
-              <option value="1" selected>1x</option>
-              <option value="1.25">1.25x</option>
-              <option value="1.5">1.5x</option>
-              <option value="2">2x</option>
-            </select>
-          </div>
-          <p id="audio-expiry" class="audio-expiry hidden"></p>
-          <div id="audio-status" class="audio-status hidden" role="status" aria-live="polite" aria-atomic="true">
-            <div id="audio-status-spinner" class="audio-generating-spinner hidden" aria-hidden="true"></div>
-            <div class="audio-status-copy">
-              <p id="audio-status-title"></p>
-              <p id="audio-status-detail"></p>
-            </div>
-            <button id="audio-request-btn" class="btn secondary hidden" type="button">Generate audio</button>
-          </div>
+          </details>
           <h1 id="reading-title"></h1>
           <div id="reading-body" class="reading-body"></div>
         </div>
@@ -497,8 +504,8 @@
   <!-- Config. defer keeps execution order after the deferred CDN scripts
        above (deferred scripts run in document order after parsing). -->
   <script defer src="config.js"></script>
-  <script defer src="audio-workflow.js?v=sky3"></script>
-  <script defer src="app.js?v=sky3"></script>
+  <script defer src="audio-workflow.js?v=sky4"></script>
+  <script defer src="app.js?v=sky4"></script>
 
   <!-- Register Service Worker -->
   <script>
