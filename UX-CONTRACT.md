@@ -20,8 +20,21 @@ the audio migrations under `supabase/migrations/` and `tts/worker.py`.
   article open. Its summary exposes job status or Ready/Playing. Expanding never
   starts playback; collapsing never interrupts it. Ineligible saves hide it.
 - Back/Forward buttons seek 15 seconds and clamp at zero and recording duration.
-- Speed and playback-position persistence were assessed as practical, but remain
-  unchanged pending the user's next instruction.
+- Listening speed is remembered per account; position is remembered per article
+  and canonical recording URL. `web/audio-memory.js` owns local checkpoints and
+  owner-only sync through the playback-memory migration. New recordings reset
+  position; finished recordings reopen at zero; nothing autoplays on restore.
+- Local checkpoints save roughly every second while active, plus pause, seek,
+  close and page hide. Account writes are throttled to ten seconds while playing,
+  with immediate writes on pause/seek/close and keepalive on page exit. Offline
+  writes stay pending for reconnect/reopen. Failure never blocks playback.
+- Listening-event timestamps prevent delayed older writes from
+  replacing a newer choice or intentional rewind. Client event times are used
+  for ordering and capped at server time; devices should use automatic clocks.
+- Preferences and positions are owner-readable only. Only authenticated RPCs
+  write them, checking current save ownership, archive state and recording URL.
+  Deleting an article cascades its account resume point. Local caches are keyed
+  by account and are ignored for a regenerated recording.
 
 - New full articles queue automatically after the migration. Existing articles
   are not backfilled automatically. Highlights and text under 100 characters

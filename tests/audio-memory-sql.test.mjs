@@ -1,0 +1,46 @@
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+const {PGlite}=await import(process.env.PGLITE_MODULE||'@electric-sql/pglite');
+const db=new PGlite();let checks=0;
+const user='10000000-0000-4000-8000-000000000001',other='10000000-0000-4000-8000-000000000002',save='20000000-0000-4000-8000-000000000001';
+async function check(sql,expected){const {rows}=await db.query(sql);assert.equal(Object.values(rows[0])[0],expected,sql);checks++;}
+await db.exec(`create role anon;create role authenticated;create role service_role bypassrls;
+create schema auth;create table auth.users(id uuid primary key);insert into auth.users values('${user}'),('${other}');
+create function auth.uid() returns uuid language sql as $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;
+grant usage on schema auth,public to anon,authenticated,service_role;
+create table public.saves(id uuid primary key,user_id uuid,audio_url text,is_archived boolean default false);
+insert into public.saves values('${save}','${user}','recording-1',false);`);
+await db.exec(await readFile(new URL('../supabase/migrations/202610200001_audio_playback_memory.sql',import.meta.url),'utf8'));
+await db.exec(`set role anon;`);
+await assert.rejects(db.exec(`select public.remember_stash_audio_speed(1.5,now())`));checks++;
+await db.exec(`reset role;set role authenticated;set request.jwt.claim.sub='${user}'`);
+await check(`select public.remember_stash_audio_speed(1.5,'2020-01-02')`,true);
+await check(`select public.remember_stash_audio_speed(1,'2020-01-01')`,false);
+await check(`select speed from public.audio_preferences`,1.5);
+await assert.rejects(db.exec(`select public.remember_stash_audio_speed(3,now())`));checks++;
+await assert.rejects(db.exec(`insert into public.audio_preferences values('${other}',1,now(),now())`));checks++;
+const write=(position,duration=120,completed=false,at='2020-01-02',ref='recording-1')=>`select public.remember_stash_audio_position('${save}','${ref}',${position},${duration},${completed},'${at}')`;
+await check(write(42),true);
+await check(write(10,120,false,'2020-01-01'),false);
+await check(`select position_seconds from public.audio_positions`,42);
+await check(write(15,120,false,'2020-01-03'),true); // An intentional rewind is remembered.
+await check(`select position_seconds from public.audio_positions`,15);
+await assert.rejects(db.exec(write(-1)));checks++;
+await assert.rejects(db.exec(write(150)));checks++;
+await assert.rejects(db.exec(write("'NaN'::double precision")));checks++;
+await assert.rejects(db.exec(write(1,"'Infinity'::double precision")));checks++;
+await check(write(120,120,true,'2020-01-04'),true);
+await check(`select completed from public.audio_positions`,true);
+await db.exec(`set request.jwt.claim.sub='${other}'`);
+await check(`select count(*)::int from public.audio_positions`,0);
+await check(`select count(*)::int from public.audio_preferences`,0);
+await check(write(20),false);
+await db.exec(`reset role;update public.saves set audio_url='recording-2' where id='${save}';set role authenticated;set request.jwt.claim.sub='${user}'`);
+await check(write(20),false); // Delayed write from old recording cannot attach to replacement.
+await check(write(3,120,false,'2020-01-01','recording-2'),true);
+await check(`select audio_url from public.audio_positions`,'recording-2');
+await db.exec(`reset role;update public.saves set is_archived=true where id='${save}';set role authenticated;set request.jwt.claim.sub='${user}'`);
+await check(write(9,120,false,'2020-01-05','recording-2'),false);
+await db.exec(`reset role;delete from public.saves where id='${save}'`);
+await check(`select count(*)::int from public.audio_positions`,0);
+await db.close();console.log(`${checks} listening memory, permissions, stale updates, regeneration and deletion checks passed`);

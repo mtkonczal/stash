@@ -46,15 +46,22 @@ const root = path.resolve(__dirname, '..');
         storage: { from: () => ({ createSignedUrl: async () => ({ data: {
           signedUrl: '/tts/auditions/more-female/af_sky.mp3',
         }, error: null }) }) },
-        rpc: () => ({ abortSignal: async () => {
-          window.fixture.job = { status: 'queued' };
-          return { error: null };
+        rpc: (name,args) => ({ abortSignal: async () => {
+          if(name==='remember_stash_audio_speed') {
+            window.fixture.speed={speed:args.p_speed,changed_at:args.p_changed_at};
+          } else if(name==='remember_stash_audio_position') {
+            window.fixture.position={audio_url:args.p_audio_url,position_seconds:args.p_position,
+              duration_seconds:args.p_duration,completed:args.p_completed,changed_at:args.p_changed_at};
+          } else window.fixture.job = { status: 'queued' };
+          return { error: null, data:true };
         }}),
         from(table) {
           const q = { fields:'', select(fields) { this.fields=fields; return this; }, eq() { return this; },
             abortSignal() { return this; }, order() { return this; },
             result() {
               if (table === 'saves') return { data: { audio_url: window.fixture.url, audio_expires_at:window.fixture.expiresAt, is_archived:window.fixture.archived, content: 'An article. '.repeat(30) }, error: window.fixture.error };
+              if (table === 'audio_preferences') return {data:window.fixture.speed||null,error:null};
+              if (table === 'audio_positions') return {data:window.fixture.position||null,error:null};
               if (table === 'audio_jobs') return { data: window.fixture.job, error: window.fixture.error };
               if (table === 'audio_workers') return { data: window.fixture.seen ? { last_seen: window.fixture.seen } : null, error: window.fixture.error };
               return { data: [], error: null };
@@ -141,6 +148,36 @@ const root = path.resolve(__dirname, '..');
     await page.locator('#audio-section > summary').click();
     await page.locator('#audio-play-btn').click();
     await page.evaluate(async () => {
+      const a=app.audio;
+      await new Promise(resolve=>{a.addEventListener('seeked',resolve,{once:true});a.currentTime=18;});
+      app.closeReadingPane();
+    });
+    await page.reload();
+    await page.waitForFunction(() => typeof app !== 'undefined' && app.audioMemory);
+    await page.evaluate(async () => {
+      app.user={id:'fixture-user'};app.showMainScreen();
+      fixture.url='storage://stash-audio/fixture-user/recording.mp3';
+      fixture.seen=new Date().toISOString();
+      await app.openReadingPane({id:'fixture-save',title:'Resumed recording',created_at:new Date().toISOString(),content:'Fixture article. '.repeat(20)});
+    });
+    await page.waitForFunction(() => app.audio && Math.abs(app.audio.currentTime-18)<0.2);
+    assert.equal(await page.evaluate(() => app.audio.playbackRate),1.5);
+    assert.equal(await page.evaluate(() => app.isPlaying),false);
+    assert.equal(await page.locator('#audio-section').evaluate(e=>e.open),false);
+    await page.evaluate(async () => {
+      app.closeReadingPane();
+      localStorage.removeItem(app.audioMemory.key('fixture-user'));
+      app.audioMemory.fallback.clear();
+      fixture.speed={speed:1.25,changed_at:new Date().toISOString()};
+      fixture.position={audio_url:fixture.url,position_seconds:27,duration_seconds:46,
+        completed:false,changed_at:new Date().toISOString()};
+      await app.openReadingPane({id:'fixture-save',title:'Account resume',created_at:new Date().toISOString(),content:'Fixture article. '.repeat(20)});
+    });
+    await page.waitForFunction(() => app.audio && Math.abs(app.audio.currentTime-27)<0.2);
+    assert.equal(await page.evaluate(() => app.audio.playbackRate),1.25);
+    assert.equal(await page.evaluate(() => app.isPlaying),false);
+    await page.locator('#audio-section > summary').click();
+    await page.evaluate(async () => {
       fixture.url=null;
       fixture.archived=true;
       await app.audioWorkflow.refresh(app.audioWorkflow.epoch);
@@ -168,7 +205,7 @@ const root = path.resolve(__dirname, '..');
     await page.getByText('Audio setup isn’t available yet', { exact:true }).last().waitFor();
     await page.evaluate(() => app.closeReadingPane());
     assert.deepEqual(failures,[]);
-    console.log('Chromium: collapsed disclosure, keyboard expand, 15-second seeks and boundaries, Generate, keyboard, waiting, progress, failed/retry, private playback, speed, archive/unarchive, expired/regenerate, close, setup error, narrow viewport, dark theme, reduced motion passed');
+    console.log('Chromium: speed and resume after reload and without local cache, collapsed disclosure, keyboard expand, 15-second seeks and boundaries, Generate, keyboard, waiting, progress, failed/retry, private playback, speed, archive/unarchive, expired/regenerate, close, setup error, narrow viewport, dark theme, reduced motion passed');
   } finally {
     if (browser) await browser.close();
     await new Promise(resolve => server.close(resolve));

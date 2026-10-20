@@ -18,6 +18,7 @@ supabase db query --linked --file supabase/migrations/202610180001_audio_jobs.sq
 supabase db query --linked --file supabase/migrations/202610180002_audio_storage_budget.sql
 supabase db query --linked --file supabase/migrations/202610180003_audio_retention.sql
 supabase db query --linked --file supabase/migrations/202610190001_audio_archive_delete.sql
+supabase db query --linked --file supabase/migrations/202610200001_audio_playback_memory.sql
 ```
 
 Provide `STASH_SUPABASE_URL`, `STASH_SUPABASE_SERVICE_ROLE_KEY`, and
@@ -113,14 +114,27 @@ or the free service's 50 MB per-file upload limit. Active grandfathered files
 are not deleted to make room, so the retained legacy library still counts
 against this limit. Free generation does not remove storage/transfer quotas.
 
+## Listening memory
+
+The browser remembers speed per account and position per article/recording.
+`web/audio-memory.js` keeps local checkpoints and syncs to owner-only
+`audio_preferences` and `audio_positions`. Playback resumes paused. A finished
+or regenerated recording starts at the beginning. Local state survives failed
+sync; pending events retry on reconnect or reopening. Server writes occur at
+most about every ten seconds during playback, plus pause/seek/close events.
+Page-exit requests use keepalive. Ordering uses device event timestamps, capped
+at server time, so automatic device clocks are recommended. No new audio files
+or paid provider are involved.
+
 ## Tests
 
 ```sh
 tts/.venv-kokoro/bin/python -m unittest discover -s tts/tests -v
-node --test tests/audio-workflow.test.cjs
+node --test tests/audio-workflow.test.cjs tests/audio-memory.test.cjs
 # Install @electric-sql/pglite and playwright in a separate test environment:
 PGLITE_MODULE=/absolute/path/to/@electric-sql/pglite/dist/index.js node tests/audio-queue.test.mjs
 PGLITE_MODULE=/absolute/path/to/@electric-sql/pglite/dist/index.js node tests/audio-retention.test.mjs
+PGLITE_MODULE=/absolute/path/to/@electric-sql/pglite/dist/index.js node tests/audio-memory-sql.test.mjs
 PLAYWRIGHT_MODULE=/absolute/path/to/playwright node tests/audio-browser.cjs
 ```
 

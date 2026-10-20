@@ -32,6 +32,7 @@ class StashApp {
       CONFIG.SUPABASE_ANON_KEY
     );
     this.audioWorkflow = new window.StashAudioWorkflow(this);
+    this.audioMemory = new window.StashAudioMemory(this);
 
     // Load theme preference
     this.loadTheme();
@@ -236,9 +237,7 @@ class StashApp {
     document.getElementById('audio-forward-btn').addEventListener('click', () => this.skipAudio(15));
 
     document.getElementById('audio-speed').addEventListener('change', (e) => {
-      if (this.audio) {
-        this.audio.playbackRate = parseFloat(e.target.value);
-      }
+      this.audioMemory.setSpeed(e.target.value);
     });
 
     document.getElementById('audio-progress-bar').addEventListener('click', (e) => {
@@ -1258,6 +1257,10 @@ class StashApp {
     }
     if (version !== this.audioInitVersion) return false;
 
+    const saveId = this.audioWorkflow.save?.id;
+    if (!saveId) return false;
+    const restored = await this.audioMemory.restore(saveId, url);
+    if (version !== this.audioInitVersion) return false;
     this.audio = new Audio(audioSrc);
     const audio = this.audio;
     this.isPlaying = false;
@@ -1266,7 +1269,7 @@ class StashApp {
     document.getElementById('audio-progress').style.width = '0%';
     document.getElementById('audio-current').textContent = '0:00';
     document.getElementById('audio-duration').textContent = '0:00';
-    document.getElementById('audio-speed').value = '1';
+    document.getElementById('audio-speed').value = String(restored.speed);
     this.updatePlayButton();
 
     // Set up event listeners
@@ -1298,6 +1301,7 @@ class StashApp {
         detail: 'Your recording is saved. Reload the audio to try again.', button: 'Load audio', action: 'refresh',
       });
     });
+    this.audioMemory.attach(audio, saveId, url, restored);
     return true;
   }
 
@@ -1331,6 +1335,7 @@ class StashApp {
   }
 
   stopAudio() {
+    this.audioMemory?.detach();
     this.audioInitVersion = (this.audioInitVersion || 0) + 1;
     if (this.audio) {
       this.audio.pause();
